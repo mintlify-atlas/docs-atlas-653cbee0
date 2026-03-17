@@ -1,0 +1,249 @@
+---
+title: "Data model"
+description: "Complete reference for the four on-chain maps, field types, basis-point splits, and dynamic state computation."
+---
+
+The Heirloom contract stores all vault state across four Clarity maps. There are no global counters, no contract-level balances tracked separately from the SIP-010 token contracts, and no enum fields — vault state is always computed from raw timestamps.
+
+## Vaults map
+
+Keyed by `principal` (the vault owner's address). One vault per owner at any given time.
+
+```clarity
+(define-map vaults
+  principal
+  {
+    heartbeat-interval: uint,
+    grace-period: uint,
+    last-heartbeat: uint,
+    sbtc-balance: uint,
+    usdcx-balance: uint,
+    guardian: (optional principal),
+    guardian-pause-used: bool,
+    is-distributed: bool,
+    created-at: uint,
+    heir-count: uint,
+    claims-count: uint,
+  }
+)
+```
+
+### Vault fields
+
+<ParamField path="heartbeat-interval" type="uint" required>
+  How often the owner must call `heartbeat()`, in seconds. The vault enters the `grace` state once `stacks-block-time − last-heartbeat` exceeds this value. Set at creation and fixed for the vault's lifetime.
+</ParamField>
+
+<ParamField path="grace-period" type="uint" required>
+  Additional seconds after the heartbeat interval expires before heirs can claim. Provides a buffer for temporary owner absence (hospitalization, travel, device loss). Set at creation and fixed for the vault's lifetime.
+</ParamField>
+
+<ParamField path="last-heartbeat" type="uint" required>
+  The `stacks-block-time` value recorded at the most recent `heartbeat()` call (or at vault creation). All state computations use this as the start of the elapsed-time window.
+</ParamField>
+
+<ParamField path="sbtc-balance" type="uint" required>
+  sBTC held in the vault, denominated in satoshis (1 BTC = 100,000,000 satoshis). Updated on each `deposit-sbtc` call and decremented as heirs claim their shares.
+</ParamField>
+
+<ParamField path="usdcx-balance" type="uint" required>
+  USDCx held in the vault, denominated in micro-units (1 USD = 1,000,000 micro-units). Updated on each `deposit-usdcx` call and decremented as heirs claim their shares.
+</ParamField>
+
+<ParamField path="guardian" type="(optional principal)">
+  The trusted address permitted to call `guardian-pause()` once during the grace period. Set to `none` if no guardian is designated.
+</ParamField>
+
+<ParamField path="guardian-pause-used" type="bool" required>
+  Whether the guardian has used their one-time pause. Once `true`, the `guardian-pause()` function rejects all further calls with `ERR-GUARDIAN-PAUSE-USED`. Persists even if the owner later sends a recovery heartbeat.
+</ParamField>
+
+<ParamField path="is-distributed" type="bool" required>
+  `true` when the vault is closed — either because all heirs have claimed or because the owner called `emergency-withdraw()`. Used as the gate for vault re-creation.
+</ParamField>
+
+<ParamField path="created-at" type="uint" required>
+  The `stacks-block-time` value recorded at vault creation. Informational only — not used in state computation.
+</ParamField>
+
+<ParamField path="heir-count" type="uint" required>
+  The number of heirs registered at vault creation (or after the most recent `update-heirs` call). Used together with `claims-count` to determine when all heirs have claimed and the vault should auto-distribute.
+</ParamField>
+
+<ParamField path="claims-count" type="uint" required>
+  The number of heirs who have successfully called `claim()`. When `claims-count == heir-count`, the vault is automatically marked as `is-distributed = true`.
+</ParamField>
+
+## Heirs map
+
+Keyed by an `{owner, heir}` principal pair. Stores the heir's allocation.
+
+```clarity
+(define-map heirs
+  {
+    owner: principal,
+    heir: principal,
+  }
+  { split-bps: uint }
+)
+```
+
+<ParamField path="split-bps" type="uint" required>
+  The heir's share of vault assets in basis points. `10000` represents 100%. All heir `split-bps` values for a given owner must sum to exactly `10000` — the contract enforces this on `create-vault` and `update-heirs`.
+</ParamField>
+
+### Basis points
+
+Basis points (bps) express percentages as integers to avoid floating-point arithmetic in the contract:
+
+| Percentage | Basis points |
+|---|---|
+| 100% | 10000 |
+| 50% | 5000 |
+| 33.3% | 3333 (remainder stays in vault) |
+| 25% | 2500 |
+| 10% | 1000 |
+| 1% | 100 |
+
+Heir shares are calculated at claim time using integer division:
+
+```clarity
+;; From claim in heirloom-vault.clar
+(define-constant BASIS-POINTS u10000)
+
+(let (
+    (split-bps (get split-bps heir-data))
+    (sbtc-share (/ (* (get sbtc-balance vault) split-bps) BASIS-POINTS))
+    (usdcx-share (/ (* (get usdcx-balance vault) split-bps) BASIS-POINTS))
+  )
+  ...
+)
+```
+
+<Note>
+  Due to integer division, tiny remainders (less than 1 satoshi or 1 micro-unit) may be left in the vault after all heirs claim. These amounts are negligible in practice but cannot be recovered once the vault is distributed.
+</Note>
+
+## Heir list map
+
+Keyed by owner `principal`. Stores an ordered list of up to 10 heir addresses for that vault owner.
+
+```clarity
+(define-map heir-list
+  principal
+  (list 10 principal)
+)
+```
+
+The heir list is used to:
+
+- Iterate over heirs during vault creation to reset claim statuses on re-creation.
+- Expose the ordered heir list via `get-heir-list` for frontend display.
+
+Maximum 10 heirs per vault. This is a hard limit imposed by the Clarity list type.
+
+## Heir claimed map
+
+Keyed by an `{owner, heir}` principal pair. A simple boolean tracking whether each heir has claimed.
+
+```clarity
+(define-map heir-claimed
+  {
+    owner: principal,
+    heir: principal,
+  }
+  bool
+)
+```
+
+This map defaults to `false` when a key is absent (`default-to false`):
+
+```clarity
+;; From claim in heirloom-vault.clar
+(let (
+    (already-claimed (default-to false
+      (map-get? heir-claimed {
+        owner: vault-owner,
+        heir: claimer,
+      })
+    ))
+  )
+  (asserts! (not already-claimed) ERR-ALREADY-CLAIMED)
+  ...
+)
+```
+
+When a vault is re-created after distribution, the `reset-heir-claim` private helper explicitly sets all heir entries to `false` so that previous claim records do not block new heirs.
+
+## Dynamic state computation
+
+Vault state is derived on every `get-vault-status` call — it is never stored as an enum field. The computation depends on two private helpers:
+
+```clarity
+;; Elapsed time since last heartbeat
+(define-private (get-elapsed (vault ...))
+  (- stacks-block-time (get last-heartbeat vault))
+)
+
+;; Effective deadline: interval + grace + optional 30-day guardian bonus
+(define-private (get-effective-deadline (vault ...))
+  (let (
+      (base-deadline (+ (get heartbeat-interval vault) (get grace-period vault)))
+      (pause-bonus (if (get guardian-pause-used vault)
+        GUARDIAN-PAUSE-BONUS
+        u0
+      ))
+    )
+    (+ base-deadline pause-bonus)
+  )
+)
+```
+
+Where `GUARDIAN-PAUSE-BONUS` is the constant `u2592000` (30 days in seconds).
+
+### State formula
+
+```
+elapsed  = stacks-block-time − last-heartbeat
+deadline = heartbeat-interval + grace-period + (2,592,000 if guardian-pause-used else 0)
+
+state:
+  if is-distributed == true        → "distributed"
+  else if elapsed >= deadline      → "claimable"
+  else if elapsed >= interval      → "grace"
+  else                             → "active"
+```
+
+### State transition table
+
+| State | Condition | `is-distributed` |
+|---|---|---|
+| `active` | `elapsed < heartbeat-interval` | `false` |
+| `grace` | `heartbeat-interval ≤ elapsed < deadline` | `false` |
+| `claimable` | `elapsed ≥ deadline` | `false` |
+| `distributed` | — | `true` |
+
+## `get-vault-status` response shape
+
+The read-only function returns a fully computed snapshot. All time fields are in seconds.
+
+```clarity
+;; Return type of get-vault-status
+(ok {
+  state: (string-ascii 12),          ;; "active" | "grace" | "claimable" | "distributed"
+  sbtc-balance: uint,
+  usdcx-balance: uint,
+  last-heartbeat: uint,
+  heartbeat-interval: uint,
+  grace-period: uint,
+  elapsed-seconds: uint,
+  seconds-until-grace: uint,         ;; 0 if already in grace or beyond
+  seconds-until-claimable: uint,     ;; 0 if already claimable or distributed
+  heir-count: uint,
+  claims-count: uint,
+  guardian: (optional principal),
+  guardian-pause-used: bool,
+  is-distributed: bool,
+  created-at: uint,
+})
+```

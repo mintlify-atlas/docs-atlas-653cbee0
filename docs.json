@@ -1,122 +1,110 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Heirloom",
+  "theme": "almond",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#8fc319",
+    "light": "#293906",
+    "dark": "#293906"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/d4c50d22-5893-4e14-9bf3-3f2b5a8e9def.png",
+  "logo": {
+    "light": "https://media.brand.dev/d4c50d22-5893-4e14-9bf3-3f2b5a8e9def.png",
+    "dark": "https://media.brand.dev/d4c50d22-5893-4e14-9bf3-3f2b5a8e9def.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Ge0frey/Heirloom"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Ge0frey/Heirloom"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/heartbeat",
+              "concepts/vault-lifecycle",
+              "concepts/heirs-and-splits",
+              "concepts/guardian-system"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Using the App",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "app/create-vault",
+              "app/dashboard",
+              "app/claim-inheritance",
+              "app/wallet-setup"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Smart Contract",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "contract/overview",
+              "contract/data-model",
+              "contract/error-codes",
+              "contract/tokens"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/testing",
+              "development/deployment",
+              "development/environment-variables"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Contract Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Public Functions",
             "pages": [
-              "api-reference/introduction"
+              "reference/create-vault",
+              "reference/deposit-sbtc",
+              "reference/deposit-usdcx",
+              "reference/heartbeat",
+              "reference/claim",
+              "reference/emergency-withdraw",
+              "reference/guardian-pause",
+              "reference/update-heirs"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Read-Only Functions",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "reference/get-vault-status",
+              "reference/get-heir-info",
+              "reference/get-heir-list"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

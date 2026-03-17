@@ -1,0 +1,147 @@
+---
+title: "Wallet setup"
+description: "Install and connect a Stacks wallet to use Heirloom on testnet or mainnet."
+keywords: ["wallet", "Leather", "Xverse", "Stacks", "connect", "testnet", "STX", "faucet"]
+---
+
+Heirloom is a non-custodial app. You interact with the smart contract directly from your own Stacks wallet — the app never holds your keys or funds.
+
+## Choosing a wallet
+
+Heirloom supports two Stacks wallet browser extensions.
+
+<Tabs>
+  <Tab title="Leather">
+    Leather (formerly Hiro Wallet) is the most widely used Stacks wallet. It supports all Stacks token standards including sBTC and USDCx.
+
+    - Available for Chrome and Firefox
+    - Supports Stacks mainnet and testnet
+    - Open source
+
+    Install from [leather.io](https://leather.io).
+  </Tab>
+  <Tab title="Xverse">
+    Xverse is a mobile-first wallet with a full-featured browser extension. It is widely used by the Bitcoin and Stacks communities.
+
+    - Available for Chrome
+    - Supports Stacks mainnet and testnet
+    - Also available as an iOS and Android app
+
+    Install from [xverse.app](https://xverse.app).
+  </Tab>
+</Tabs>
+
+<Warning>
+  After creating a wallet, write down your seed phrase and store it securely before continuing. Heirloom is non-custodial — no one can recover your wallet for you if you lose your seed phrase.
+</Warning>
+
+## Getting testnet STX
+
+You need testnet STX to pay transaction fees on Stacks. Real STX is not required for testnet use.
+
+<Steps>
+  <Step title="Open the Hiro faucet">
+    Go to the [Hiro testnet faucet](https://explorer.hiro.so/sandbox/faucet?chain=testnet).
+  </Step>
+  <Step title="Connect your wallet">
+    Click **Connect Stacks Wallet** and approve the connection request in your wallet extension.
+  </Step>
+  <Step title="Request STX">
+    Click **Request STX**. The faucet sends 500 testnet STX to your address within a few seconds.
+
+    <Note>
+      The faucet enforces a cooldown between requests from the same address. One request provides enough STX to cover vault creation, deposits, heartbeats, and claiming.
+    </Note>
+  </Step>
+</Steps>
+
+## Connecting your wallet in Heirloom
+
+<Steps>
+  <Step title="Open the app">
+    Navigate to the Heirloom app. To run it locally:
+
+    ```bash
+    cd heirloom-app
+    npm install
+    npm run dev
+    ```
+
+    Then open [http://localhost:5173](http://localhost:5173).
+  </Step>
+  <Step title="Click Connect Wallet">
+    Click **Connect Wallet** in the top-right corner of the navbar. The wallet selection dialog appears.
+  </Step>
+  <Step title="Select your wallet">
+    Choose **Leather** or **Xverse** — whichever extension you have installed.
+  </Step>
+  <Step title="Approve the connection">
+    Your wallet extension opens and asks you to approve the connection. Click **Connect** or **Approve**.
+  </Step>
+  <Step title="Confirm connection">
+    Your abbreviated Stacks address appears in the navbar. The token balances dropdown shows your sBTC and USDCx balances.
+  </Step>
+</Steps>
+
+## Switching wallets
+
+To switch from one wallet to another:
+
+1. Click **Disconnect** in the top-right corner of the navbar (or the dashboard header).
+2. This calls `disconnect()` from `@stacks/connect` and clears the stored session.
+3. Click **Connect Wallet** again and select the other wallet.
+
+<Note>
+  Disconnecting does not affect your vault. The vault lives on-chain and is tied to your Stacks address, not your browser session.
+</Note>
+
+## What the app stores in localStorage
+
+When you connect a wallet, `@stacks/connect` writes your session data to `localStorage` under a key it manages internally. Heirloom reads this data on page load to restore your session automatically — you do not need to reconnect every time you open the app.
+
+The stored data contains:
+- Your Stacks address (`addresses.stx[0].address`)
+- No private keys or seed phrases are ever stored
+
+To clear this data, click **Disconnect** in the app. Clearing your browser's site data also removes it.
+
+## Testnet vs. mainnet configuration
+
+The app network is set by the `VITE_NETWORK` environment variable in the `.env` file.
+
+```text
+# Testnet (default for development)
+VITE_NETWORK=testnet
+
+# Mainnet
+VITE_NETWORK=mainnet
+```
+
+| Setting | Network | Tokens | Fees |
+|---------|---------|--------|------|
+| `testnet` | Stacks testnet | Test sBTC, test USDCx | Testnet STX (free via faucet) |
+| `mainnet` | Stacks mainnet | Real sBTC, real USDCx | Real STX |
+
+<Warning>
+  When running on mainnet, all transactions involve real assets. Double-check all addresses and amounts before confirming any transaction.
+</Warning>
+
+## Troubleshooting wallet connection
+
+<AccordionGroup>
+  <Accordion title="The wallet dialog opens but nothing happens after I select a wallet">
+    This usually means the wallet extension is not installed or is not active in the current browser. Check that the extension icon appears in your browser toolbar. If you recently installed it, try refreshing the page.
+  </Accordion>
+  <Accordion title="My address does not appear in the navbar after connecting">
+    The app reads your address from the `@stacks/connect` response and from `localStorage`. If neither source returns an address, the connection silently fails. Try disconnecting and reconnecting, or close and reopen the browser tab.
+  </Accordion>
+  <Accordion title="The app shows a different address than I expect">
+    Stacks wallets can hold multiple accounts. Make sure you have the correct account selected in your wallet extension before connecting. Disconnect, switch accounts in the extension, then reconnect.
+  </Accordion>
+  <Accordion title="I connected on testnet before but now I see mainnet addresses">
+    The `VITE_NETWORK` environment variable controls which network the app targets. If you or another developer changed the `.env` file, the app may now point to a different network. Verify the value and restart the development server.
+  </Accordion>
+  <Accordion title="The session does not restore after I close and reopen the tab">
+    Some browsers or privacy extensions clear `localStorage` on tab close. Check your browser's site data settings and ensure `localStorage` is not blocked for the app's origin. Disable any extensions that clear storage automatically.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,156 @@
+---
+title: "Claim inheritance"
+description: "How heirs discover, review, and claim their share from an Heirloom vault once it becomes claimable."
+keywords: ["claim", "heir", "inheritance", "claimable", "vault", "sBTC", "USDCx", "auto-discovery"]
+---
+
+The claim page is the portal for heirs. It automatically searches for any vaults where your connected wallet is registered as a beneficiary, displays your allocation, and lets you claim when the vault is ready.
+
+<Info>
+  This page is for heirs, not vault owners. If you are an owner looking to manage your vault, go to the [Dashboard](/app/dashboard) instead.
+</Info>
+
+---
+
+## Prerequisites
+
+- A Stacks wallet (Leather or Xverse) installed and connected
+- Your wallet address must be registered as an heir in the vault you are trying to claim
+- The vault must have reached the **Claimable** state (both the heartbeat interval and grace period must have elapsed without a heartbeat from the owner)
+
+---
+
+## Auto-discovery
+
+When you connect your wallet and navigate to the claim page, Heirloom automatically searches for vaults where your address is a registered heir.
+
+**How it works:**
+
+The app calls `findVaultsForHeir(stxAddress)` from `src/lib/contracts.ts`, which scans recent transactions on the Hiro API for `create-vault` calls that include your address in their heir list. Each matched vault is then queried for its current state, your allocation percentage, and the calculated token amounts for your share.
+
+While the search is running, animated loading dots are shown. The scan covers recent contract activity — if the vault was created before the scan window, use [manual lookup](#manual-lookup) instead.
+
+<Note>
+  Auto-discovery runs once when you connect your wallet. It does not re-run automatically. Refresh the page to trigger a new scan if the vault was recently created.
+</Note>
+
+---
+
+## Understanding vault cards
+
+Each vault found by auto-discovery appears as a card. The card shows:
+
+**Vault header (color-coded by state):**
+- **Owner address** — the truncated Stacks address of the vault creator
+- **Status** — the vault's current state in large uppercase text
+
+| State color | Vault state | Meaning |
+|-------------|-------------|--------|
+| Green | Active | The owner is still sending heartbeats. You cannot claim yet. |
+| Yellow | Grace period | A heartbeat was missed. The vault is not claimable yet. |
+| Red | Claimable | The grace period has expired. You can claim now. |
+| Gray | Distributed | All claims have been completed. |
+
+**Allocation panel:**
+- **Share** — your percentage of the vault (e.g., 50%)
+- **sBTC** — your calculated sBTC amount based on the current vault balance
+- **USDCx** — your calculated USDCx amount (shown only if the vault holds USDCx)
+- **Claim status** — "Pending" if you haven't claimed, "Claimed" with a green checkmark if you have
+
+---
+
+## When the claim button is enabled
+
+The **Claim Inheritance** button at the bottom of each vault card is enabled only when both conditions are true:
+
+1. The vault state is `claimable`
+2. You have not already claimed from this vault
+
+If either condition is not met, the button is disabled and shows a descriptive label:
+
+| Button label | Condition |
+|---|---|
+| "Vault Not Yet Claimable (active)" | Vault is still active |
+| "Vault Not Yet Claimable (grace)" | Vault is in grace period |
+| "Already Claimed" | You have already claimed from this vault |
+| "Claim Inheritance" | Ready to claim — button is enabled |
+
+---
+
+## How to claim: step by step
+
+<Steps>
+  <Step title="Connect your wallet">
+    Open the claim page and connect your Stacks wallet. Auto-discovery starts immediately after connection.
+  </Step>
+  <Step title="Wait for the search to complete">
+    The page shows a loading indicator while scanning the blockchain. When it finishes, your vault cards appear.
+  </Step>
+  <Step title="Find a claimable vault">
+    Look for a vault card with a red header and the status "Claimable". The claim button at the bottom of the card will be active.
+  </Step>
+  <Step title="Click Claim Inheritance">
+    Click the **Claim Inheritance** button. The button shows a spinner while the transaction is being prepared.
+  </Step>
+  <Step title="Confirm in your wallet">
+    Your wallet extension opens and asks you to confirm the `claim` transaction. This calls `claimInheritance(ownerAddress)` on the contract, which transfers your share of sBTC and/or USDCx directly to your wallet address.
+  </Step>
+  <Step title="View the transaction">
+    After submitting, the claim button is replaced by a success indicator and a **View on Explorer** link. Click the link to verify your transaction on the Stacks Explorer.
+  </Step>
+</Steps>
+
+<Note>
+  Each heir claims independently. Claiming your share does not affect other heirs — they claim their own percentages separately. Your claim only transfers your allocation, not the entire vault balance.
+</Note>
+
+---
+
+## Manual lookup
+
+If auto-discovery does not find a vault you expect to be listed in (for example, because the vault was created before the scan window), use manual lookup.
+
+After the auto-discovery scan completes, a collapsible **Manual vault lookup** section appears at the bottom of the page.
+
+<Steps>
+  <Step title="Expand manual lookup">
+    Click the **Manual vault lookup** header to expand the input panel.
+  </Step>
+  <Step title="Enter the vault owner's address">
+    Type or paste the full Stacks address of the vault owner (e.g., `SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ`). The field accepts both `SP...` (mainnet) and `ST...` (testnet) addresses.
+  </Step>
+  <Step title="Click Lookup">
+    Click the **Lookup** button. The app calls `lookupSingleVault(ownerAddress, yourAddress)` to check whether you are a registered heir for that specific vault.
+  </Step>
+  <Step title="Review the result">
+    If you are a registered heir, the vault card is added to your list (or updated if it was already found by auto-discovery). If the lookup fails, the error message "Vault not found or you are not a registered heir for this vault." appears below the input.
+  </Step>
+</Steps>
+
+<Tip>
+  Ask the vault owner for their Stacks address in advance. You can also find it by asking them to share the address displayed on their dashboard.
+</Tip>
+
+---
+
+## After claiming
+
+Once your claim transaction is submitted:
+
+- The claim button is replaced with a **Claim Submitted!** confirmation and a **View on Explorer** link.
+- Your sBTC and/or USDCx share is transferred to your wallet address as part of the transaction confirmation.
+- The claim status on the vault card updates to "Claimed" with a green checkmark.
+
+You can verify the transfer by checking your wallet balance or by viewing the transaction on the Stacks Explorer using the provided link.
+
+---
+
+## What happens if you wait
+
+Once a vault reaches the **Claimable** state, it remains claimable indefinitely — the state does not change on its own. There is no deadline for heirs to claim once the vault is claimable, unless the vault owner sends a recovery heartbeat.
+
+<Warning>
+  If the vault owner sends a heartbeat after the vault becomes claimable (but before full distribution), the vault returns to the **Active** state and claims are no longer available. Your registered allocation remains intact, but you would need to wait for the vault to become claimable again.
+</Warning>
+
+The vault transitions to **Distributed** only when all registered heirs have claimed their shares. After that, no further claims are possible.

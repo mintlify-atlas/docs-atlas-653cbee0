@@ -1,80 +1,178 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Set up your wallet and create your first Heirloom inheritance vault in minutes."
+keywords: ["quickstart", "vault", "sBTC", "USDCx", "heirs", "heartbeat", "Stacks", "Bitcoin"]
 ---
 
-## Get started in three steps
+This guide walks you through creating your first Heirloom vault on Stacks testnet — from installing a wallet to sending your first heartbeat.
 
-Get your documentation site running locally and make your first customization.
+<Info>
+  Heirloom runs on Stacks testnet. You will need testnet STX and testnet sBTC to complete this guide. No real funds are at risk.
+</Info>
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Columns cols={2}>
+  <Card title="Node.js v18+" icon="node-js" href="https://nodejs.org">
+    Required if you plan to run the app locally. Download the LTS release.
+  </Card>
+  <Card title="Stacks wallet" icon="wallet">
+    Leather or Xverse. Install one before continuing — instructions are in step 1 below.
+  </Card>
+</Columns>
 
-### Step 2: Deploy your changes
+---
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+## Create your vault
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Steps>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Install a Stacks wallet">
+    Heirloom supports two Stacks wallets. Install one as a browser extension.
 
-### Step 3: Go live
+    <Columns cols={2}>
+      <Card title="Leather" icon="bitcoin" href="https://leather.io">
+        The original Hiro wallet, now Leather. Available for Chrome and Firefox.
+      </Card>
+      <Card title="Xverse" icon="bitcoin" href="https://xverse.app">
+        Mobile-first wallet with a full browser extension. Available for Chrome.
+      </Card>
+    </Columns>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    After installation, create a new wallet and **save your seed phrase in a secure location before continuing.**
 
-## Next steps
+    <Warning>
+      Never share your seed phrase with anyone, including Heirloom support. Heirloom is non-custodial — no one can recover your wallet for you.
+    </Warning>
+  </Step>
 
-Now that you have your docs running, explore these key features:
+  <Step title="Get testnet STX from the faucet">
+    You need testnet STX to pay transaction fees on Stacks.
 
-<CardGroup cols={2}>
+    1. Open the [Hiro testnet faucet](https://explorer.hiro.so/sandbox/faucet?chain=testnet).
+    2. Connect your wallet when prompted.
+    3. Click **Request STX**. You will receive 500 testnet STX within a few seconds.
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+    <Note>
+      The faucet enforces a cooldown period between requests. One request is enough to cover all the transactions in this guide.
+    </Note>
+  </Step>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+  <Step title="Get testnet sBTC">
+    sBTC is the Bitcoin-backed SIP-010 token you will deposit into your vault.
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+    1. Open the [Hiro testnet explorer](https://explorer.hiro.so/?chain=testnet).
+    2. Search for the sBTC faucet or use the **Sandbox** to interact with the sBTC token contract at:
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+    ```text
+    ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+    ```
 
-</CardGroup>
+    3. Call the faucet function from your wallet address to receive testnet sBTC.
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+    <Tip>
+      You can also deposit USDCx (contract: `ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx`). A vault can hold sBTC, USDCx, or both — you only need one to get started.
+    </Tip>
+  </Step>
+
+  <Step title="Open the Heirloom app">
+    The Heirloom frontend runs on Stacks testnet. To start it locally:
+
+    ```bash
+    cd heirloom-app
+    npm install
+    npm run dev
+    ```
+
+    Then open [http://localhost:5173](http://localhost:5173) in your browser.
+  </Step>
+
+  <Step title="Connect your wallet">
+    1. Click **Connect Wallet** in the top-right corner of the app.
+    2. Select **Leather** or **Xverse** — whichever you installed.
+    3. Approve the connection request in the wallet extension.
+
+    Your Stacks address will appear in the navbar once connected.
+  </Step>
+
+  <Step title="Create your vault">
+    Click **Create Vault** and fill in the vault parameters:
+
+    | Field | Description | Example |
+    |-------|-------------|---------|
+    | **Heartbeat interval** | How often you must check in (1–365 days) | `30` days |
+    | **Grace period** | How long heirs wait after a missed heartbeat (1–365 days) | `90` days |
+    | **Heir addresses** | Up to 10 Stacks addresses | Your test address |
+    | **Percentage splits** | Allocations that must total 100% | `100%` for one heir |
+
+    <Note>
+      Splits are stored as basis points internally (100% = 10000 bps). The app handles this conversion for you — enter plain percentages.
+    </Note>
+
+    Click **Deploy Vault** and confirm the transaction in your wallet. The vault is created by calling `create-vault` on:
+
+    ```text
+    STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM.heirloom-vault-v10
+    ```
+
+    Wait for the transaction to confirm on Stacks (roughly 10–15 seconds on testnet).
+  </Step>
+
+  <Step title="Deposit sBTC or USDCx">
+    Once your vault is confirmed, open the **Deposit** panel from your vault dashboard.
+
+    - To deposit sBTC, enter an amount and click **Deposit sBTC**. This calls `deposit-sbtc` on the contract.
+    - To deposit USDCx, enter an amount and click **Deposit USDCx**. This calls `deposit-usdcx` on the contract.
+
+    Confirm each transaction in your wallet.
+
+    <Warning>
+      Deposited assets are locked in the contract. You can only retrieve them via **Emergency Withdraw** (which returns everything to you) or via heir claims after the heartbeat expires. There is no partial withdrawal.
+    </Warning>
+  </Step>
+
+  <Step title="Send your first heartbeat">
+    After depositing, your vault countdown begins. Reset it immediately by sending your first heartbeat.
+
+    1. From your vault dashboard, click **Send Heartbeat**.
+    2. Confirm the transaction in your wallet.
+
+    This calls `heartbeat()` on the contract and resets the `last-heartbeat` timestamp. Your vault is now active.
+
+    <Tip>
+      Set a calendar reminder for slightly before your heartbeat interval expires. If you miss a heartbeat and the grace period passes, your heirs can claim the vault.
+    </Tip>
+  </Step>
+
+  <Step title="Share your vault with your heirs">
+    Your heirs do not need to do anything now, but they should know:
+
+    - **Your Stacks address** — heirs look up vault status by the owner's address.
+    - **How to access the app** — point them to the Heirloom app URL.
+    - **When to act** — after the grace period passes, they navigate to **Claim Inheritance**, enter your address, and call `claim` for their share.
+
+    <Note>
+      Each heir claims independently. One heir claiming does not block others. Each claim distributes only that heir's percentage of the vault balance.
+    </Note>
+  </Step>
+
+</Steps>
+
+---
+
+## What's next
+
+<Columns cols={2}>
+  <Card title="Heartbeat mechanism" icon="heart-pulse" href="/concepts/heartbeat">
+    Understand how the liveness check works and what triggers vault expiry.
+  </Card>
+  <Card title="Vault lifecycle" icon="rotate" href="/concepts/vault-lifecycle">
+    Learn the five vault states: active, expired, grace, claimable, and closed.
+  </Card>
+  <Card title="Heirs and splits" icon="users" href="/concepts/heirs-and-splits">
+    Configure up to 10 beneficiaries with basis-point percentage splits.
+  </Card>
+  <Card title="Emergency withdrawal" icon="arrow-up-right-from-square" href="/reference/emergency-withdraw">
+    Recover all vault assets to your wallet at any time before distribution.
+  </Card>
+</Columns>

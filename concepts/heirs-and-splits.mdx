@@ -1,0 +1,187 @@
+---
+title: "Heirs and Splits"
+description: "How to designate beneficiaries, allocate shares in basis points, and understand the independent claiming process."
+---
+
+Heirloom supports up to 10 heirs per vault. Each heir receives a percentage of the vault's sBTC and USDCx balances, defined in basis points at vault creation. Heirs claim independently — there is no coordination required between them.
+
+## Adding Heirs
+
+Heirs are registered when the vault is created by passing a list of `{ heir: principal, split-bps: uint }` tuples to `create-vault`:
+
+```clarity
+(create-vault
+  u604800    ;; heartbeat-interval: 1 week
+  u259200    ;; grace-period: 3 days
+  (list
+    { heir: 'SP2J6Y09JMFWWZCT4VJX0BA5W7A9HZP5EX96Y6VZY, split-bps: u7000 }
+    { heir: 'SP3D6PV2ACBPEKYJTCMH7HEN02KP87QSP8KTEH335, split-bps: u3000 }
+  )
+  none       ;; no guardian
+)
+```
+
+<Note>
+  The contract enforces a minimum of 1 heir and a maximum of 10. Providing zero heirs or more than 10 will fail validation.
+</Note>
+
+## Basis Points Explained
+
+Splits are expressed in **basis points** (bps), where 10,000 basis points equals 100%.
+
+| Basis Points | Percentage |
+|---|---|
+| 10000 | 100% |
+| 7000 | 70% |
+| 5000 | 50% |
+| 3333 | 33.33% |
+| 2500 | 25% |
+| 1000 | 10% |
+| 100 | 1% |
+
+The sum of all heir `split-bps` values **must equal exactly 10,000**. Any deviation — even by 1 basis point — causes the transaction to fail with `ERR-INVALID-SPLITS` (u106).
+
+```clarity
+;; Validation in create-vault and update-heirs
+(asserts! (is-eq total-splits BASIS-POINTS) ERR-INVALID-SPLITS)
+```
+
+**Common split configurations:**
+
+| Heirs | Split |
+|---|---|
+| 1 heir | 10000 |
+| 2 equal | 5000 + 5000 |
+| 3 equal | 3334 + 3333 + 3333 |
+| 70 / 30 | 7000 + 3000 |
+| 50 / 25 / 25 | 5000 + 2500 + 2500 |
+
+<Warning>
+  Integer rounding is required for equal splits that don't divide evenly. For 3 equal heirs, one heir must receive 3334 bps and the others 3333 bps to reach the required total of 10000.
+</Warning>
+
+## How Share Calculation Works
+
+When an heir calls `claim()`, the contract calculates their share using **floor integer division**:
+
+```clarity
+;; From the claim function
+(sbtc-share  (/ (* (get sbtc-balance vault) split-bps) BASIS-POINTS))
+(usdcx-share (/ (* (get usdcx-balance vault) split-bps) BASIS-POINTS))
+```
+
+This is equivalent to:
+
+```
+heirShare = floor(balance × splitBps / 10000)
+```
+
+**Example:** A vault with 1,000,000 satoshis sBTC and two heirs at 7000 and 3000 bps:
+
+| Heir | Split | Calculation | Receives |
+|---|---|---|---|
+| Heir A | 7000 bps (70%) | floor(1,000,000 × 7000 / 10000) | 700,000 sats |
+| Heir B | 3000 bps (30%) | floor(1,000,000 × 3000 / 10000) | 300,000 sats |
+
+Because floor division is used, fractional satoshis are truncated. In cases with many heirs and small balances, a few satoshis may remain in the vault after all heirs claim. These are not recoverable once the vault is distributed.
+
+## Updating Heirs
+
+The heir list and splits can be changed at any time while the vault is not distributed — including during the `grace` and `claimable` states:
+
+```clarity
+(update-heirs
+  (list
+    { heir: 'SP_NEW_HEIR_ADDRESS, split-bps: u6000 }
+    { heir: 'SP_ANOTHER_HEIR,    split-bps: u4000 }
+  )
+)
+```
+
+The `update-heirs` function:
+- Replaces the entire heir list (it is not additive).
+- Resets `heir-count` to the length of the new list.
+- Does **not** reset the `claims-count` or existing claim records.
+
+<Warning>
+  If you call `update-heirs` after some heirs have already claimed (during claimable state), the contract's `claims-count` reflects the old heir list. The auto-distribution trigger (`claims-count == heir-count`) may never fire correctly. Avoid updating heirs after claims have begun.
+</Warning>
+
+## Finding Your Vault as an Heir
+
+The Heirloom app's Claim page auto-discovers vaults where your connected wallet is a registered heir by querying the Hiro API for contract events associated with your address.
+
+To look up a specific vault manually, call `get-heir-info` with the vault owner's address and your address:
+
+```typescript
+const result = await fetchCallReadOnlyFunction({
+  contractAddress: "STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM",
+  contractName: "heirloom-vault-v10",
+  functionName: "get-heir-info",
+  functionArgs: [
+    principalCV(vaultOwnerAddress),
+    principalCV(yourAddress),
+  ],
+  network: "testnet",
+  senderAddress: yourAddress,
+});
+// Returns: { split-bps: uint, has-claimed: bool }
+```
+
+You can also retrieve the full list of heirs for a vault:
+
+```typescript
+const heirList = await fetchCallReadOnlyFunction({
+  contractAddress: "STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM",
+  contractName: "heirloom-vault-v10",
+  functionName: "get-heir-list",
+  functionArgs: [principalCV(vaultOwnerAddress)],
+  network: "testnet",
+  senderAddress: yourAddress,
+});
+// Returns: (list 10 principal)
+```
+
+## Independent Claiming
+
+Each heir claims their share independently. There is no requirement for all heirs to claim at the same time, and one heir's claim does not trigger another's.
+
+<Steps>
+  <Step title="Vault becomes claimable">
+    `elapsed-seconds` exceeds `heartbeat-interval + grace-period` (plus any guardian pause bonus). The vault state transitions to `claimable`.
+  </Step>
+  <Step title="Heir calls claim()">
+    Any registered heir calls `claim(vault-owner-address)`. The contract verifies the vault is claimable, the caller is a registered heir, and the heir has not already claimed.
+  </Step>
+  <Step title="Tokens transferred">
+    The contract calculates the heir's sBTC and USDCx shares and transfers them via `as-contract?`. The vault's tracked balances are decremented.
+  </Step>
+  <Step title="Claim recorded">
+    The heir's claim is marked in `heir-claimed`. `claims-count` is incremented. If `claims-count == heir-count`, `is-distributed` is set to `true` automatically.
+  </Step>
+</Steps>
+
+## Error Codes for Heirs
+
+| Error | Code | Meaning |
+|---|---|---|
+| `ERR-NOT-HEIR` | u101 | The calling address is not registered as an heir for this vault |
+| `ERR-VAULT-NOT-FOUND` | u103 | No vault exists for the specified owner address |
+| `ERR-VAULT-NOT-CLAIMABLE` | u104 | The vault has not yet entered the claimable state |
+| `ERR-ALREADY-CLAIMED` | u105 | This heir has already claimed their share |
+| `ERR-VAULT-DISTRIBUTED` | u110 | The vault is already fully distributed |
+
+## What Happens If an Heir Never Claims
+
+The `claim()` function is a pull model — the contract does not push tokens to heirs. If an heir never calls `claim()`, their share remains locked in the contract indefinitely.
+
+Consequences:
+
+- The vault never reaches `distributed` state (because `claims-count` never equals `heir-count`).
+- Other heirs' shares are not affected — they can claim their own portion at any time.
+- The owner can call `emergency-withdraw()` to reclaim all remaining assets (including unclaimed heir shares) as long as the vault is not yet fully distributed.
+- The vault cannot be recreated until `is-distributed` becomes `true` (via all heirs claiming or emergency-withdraw).
+
+<Tip>
+  If you want to ensure distribution completes even if an heir is unreachable, consider using `emergency-withdraw()` to reclaim all assets and redistribute manually. Or structure splits so that unreachable parties receive a smaller allocation.
+</Tip>

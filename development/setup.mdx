@@ -1,0 +1,150 @@
+---
+title: "Development setup"
+description: "Install dependencies, run the frontend, and configure Clarinet for Heirloom smart contract development."
+keywords: ["setup", "development", "Clarinet", "Node.js", "install", "Vitest", "simnet"]
+---
+
+This page covers everything you need to run Heirloom locally: the Node.js dependencies for contract testing, the React frontend dev server, and the Clarinet toolchain for Clarity development.
+
+## Prerequisites
+
+<Columns cols={2}>
+  <Card title="Node.js v18+" icon="node-js" href="https://nodejs.org">
+    Required for both contract tests and the frontend. Download the LTS release.
+  </Card>
+  <Card title="Clarinet v2.x" icon="terminal" href="https://github.com/hirosystems/clarinet">
+    The Clarity smart contract development toolkit from Hiro. Required for contract development and deployment.
+  </Card>
+</Columns>
+
+<Note>
+  You also need a Stacks wallet (Leather or Xverse) to interact with the testnet app. See the [wallet setup guide](/app/wallet-setup) for installation instructions.
+</Note>
+
+## Install dependencies
+
+Heirloom has two separate `package.json` files — one at the project root for contract tests, and one in `heirloom-app/` for the frontend.
+
+<Steps>
+
+  <Step title="Install contract test dependencies">
+    From the project root, install the Clarinet SDK, Vitest, and related test tooling:
+
+    ```bash
+    npm install
+    ```
+
+    This installs:
+    - `@stacks/clarinet-sdk` — programmatic access to the simnet environment
+    - `vitest` — the test runner
+    - `vitest-environment-clarinet` — Clarinet integration for Vitest
+    - `chokidar-cli` — file watching for the `test:watch` script
+  </Step>
+
+  <Step title="Install frontend dependencies">
+    From the `heirloom-app/` directory, install the React application dependencies:
+
+    ```bash
+    cd heirloom-app && npm install
+    ```
+
+    This installs React, Vite, Tailwind CSS, `@stacks/connect`, `@stacks/transactions`, and all UI libraries.
+  </Step>
+
+</Steps>
+
+## Run the frontend
+
+Start the Vite development server from the `heirloom-app/` directory:
+
+```bash
+cd heirloom-app
+npm run dev
+```
+
+The app is available at [http://localhost:5173](http://localhost:5173) with hot module replacement (HMR) enabled.
+
+<Tip>
+  Before the app can connect to the contract, you need a `.env` file in `heirloom-app/`. See [Environment variables](/development/environment-variables) for the required values.
+</Tip>
+
+## Project structure
+
+```
+heirloom/
+  contracts/
+    heirloom-vault.clar        # Core vault smart contract (Clarity 4)
+  tests/
+    heirloom-vault.test.ts     # Contract test suite (23 tests)
+  settings/
+    Devnet.toml                # Local devnet configuration
+    Testnet.toml               # Testnet deployment settings
+    Mainnet.toml               # Mainnet deployment settings
+  deployments/
+    default.simnet-plan.yaml   # Simnet deployment plan
+    default.testnet-plan.yaml  # Testnet deployment plan
+  heirloom-app/                # React frontend
+    src/
+      pages/                   # Route pages (Index, CreateVault, Dashboard, Claim)
+      components/              # UI and layout components
+      contexts/                # WalletContext, VaultContext
+      hooks/                   # Custom React hooks
+      lib/                     # Contract interaction layer, utilities
+  Clarinet.toml                # Clarinet project configuration
+  vitest.config.ts             # Test runner configuration
+  package.json                 # Contract-level dependencies
+```
+
+## Clarinet
+
+Clarinet is the primary development tool for Clarity contracts. It manages the simnet environment, contract deployment, and test execution.
+
+### Installing Clarinet
+
+<CodeGroup>
+
+```bash macOS (Homebrew)
+brew install clarinet
+```
+
+```bash Linux / manual
+curl -L https://github.com/hirosystems/clarinet/releases/latest/download/clarinet-linux-x64-glibc.tar.gz | tar -xz
+chmod +x clarinet
+sudo mv clarinet /usr/local/bin
+```
+
+</CodeGroup>
+
+Verify the installation:
+
+```bash
+clarinet --version
+```
+
+### Clarinet.toml
+
+The `Clarinet.toml` file at the project root registers the `heirloom-vault` contract and any external contract dependencies (sBTC, USDCx) that are cached locally for simnet use. You do not need to modify this file for normal development.
+
+### How the simnet works
+
+Clarinet's simnet is a fully in-memory Stacks blockchain instance that the Clarinet SDK controls programmatically from your test code. It provides:
+
+- **Pre-funded test accounts** — `deployer`, `wallet_1` through `wallet_10`, each with STX and token balances.
+- **Instant block mining** — `simnet.mineEmptyBlocks(n)` advances the chain by `n` blocks, allowing you to simulate time passing without waiting.
+- **Contract deployment** — the `heirloom-vault` contract (and its external dependencies) are deployed automatically when the simnet starts.
+- **Direct function calls** — `simnet.callPublicFn()` and `simnet.callReadOnlyFn()` invoke contract functions and return typed `ClarityValue` results.
+
+The simnet does not connect to any network. It runs entirely in the test process, which means tests are fast, deterministic, and do not require testnet tokens.
+
+## Recommended VS Code extensions
+
+| Extension | Publisher | Purpose |
+|---|---|---|
+| **Clarity for VS Code** | Hiro Systems | Syntax highlighting, type checking, and inline diagnostics for Clarity contracts |
+| **ESLint** | Microsoft | Linting for the TypeScript frontend code |
+| **Tailwind CSS IntelliSense** | Tailwind Labs | Autocomplete for Tailwind utility classes in the frontend |
+| **Prettier** | Prettier | Code formatting for TypeScript and MDX files |
+
+<Tip>
+  Install the Clarity extension from the VS Code marketplace or by searching for `hirosystems.clarity-lsp`. It will highlight type errors and undefined variables in `.clar` files as you edit.
+</Tip>

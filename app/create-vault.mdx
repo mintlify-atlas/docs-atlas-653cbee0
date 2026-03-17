@@ -1,0 +1,184 @@
+---
+title: "Create a vault"
+description: "Walk through the four-step wizard to configure your heartbeat interval, heirs, deposits, and confirm vault creation on-chain."
+keywords: ["create vault", "wizard", "heartbeat", "heirs", "deposit", "sBTC", "USDCx", "Stacks"]
+---
+
+The vault creation wizard guides you through four steps: setting your heartbeat parameters, defining your heirs, optionally funding the vault, and confirming everything on-chain. Each step validates your input before allowing you to proceed.
+
+<Info>
+  You must have a connected Stacks wallet before starting. See [wallet setup](/app/wallet-setup) if you haven't connected yet.
+</Info>
+
+## Overview of the wizard
+
+| Step | Name | What you configure |
+|------|------|--------------------|
+| 1 | Heartbeat | Heartbeat interval and grace period |
+| 2 | Heirs | Beneficiary addresses and percentage splits |
+| 3 | Deposit | Initial sBTC and/or USDCx funding (optional) |
+| 4 | Review | Confirm parameters and submit the transaction |
+
+---
+
+## Step 1 — Heartbeat parameters
+
+The first step sets two time windows that together control when your heirs can claim.
+
+### Heartbeat interval
+
+The heartbeat interval is how often you must send a heartbeat transaction to prove you are still in control of the vault. If this window passes without a heartbeat, the vault enters the **grace** state.
+
+- Range: 1–365 days
+- Use the slider or click a preset button (30d, 60d, 90d, 180d, 365d)
+- Default: 90 days
+
+### Grace period
+
+The grace period is the buffer after a missed heartbeat. The vault becomes **claimable** only after both the heartbeat interval and the grace period have elapsed without a heartbeat.
+
+- Range: 1–90 days
+- Use the slider or click a preset button (7d, 14d, 30d, 60d, 90d)
+- Default: 30 days
+
+### Total deadline
+
+The app displays the combined deadline — `heartbeat interval + grace period`. This is the maximum time you can be unreachable before your heirs can claim.
+
+<Tip>
+  Choose an interval that fits your normal activity patterns. A 90-day interval with a 30-day grace period means your heirs cannot claim for at least 120 days of complete inactivity. Shorter intervals require more frequent check-ins but protect your heirs sooner.
+</Tip>
+
+**Recommended starting values for most users:**
+
+| Use case | Heartbeat interval | Grace period |
+|----------|-------------------|-------------|
+| Active daily users | 30 days | 14 days |
+| Typical long-term holder | 90 days | 30 days |
+| Long-term storage vault | 180 days | 60 days |
+
+<Warning>
+  The heartbeat interval and grace period are fixed at vault creation and cannot be changed for the life of the vault. Choose values you are confident you can maintain.
+</Warning>
+
+---
+
+## Step 2 — Heirs
+
+The heirs step defines who receives your vault assets and in what proportion.
+
+### Adding beneficiaries
+
+Each heir entry has three fields:
+
+- **Label** — A human-readable name for your reference (e.g., "My Son", "Partner"). Maximum 50 characters. Not stored on-chain.
+- **Stacks address** — The heir's Stacks principal address (`SP...` for mainnet, `ST...` for testnet). Maximum 128 characters.
+- **Share %** — The percentage of the vault this heir receives. Entered as a whole number (0–100).
+
+Click **Add Heir** to add more beneficiaries. You can add up to 10 heirs total.
+
+### Percentage splits
+
+All heir percentages must sum to exactly 100%. The app shows a running total badge that turns:
+- **Green** when the total equals 100% — you can proceed
+- **Yellow** when the total is below 100%
+- **Red** when the total exceeds 100%
+
+<Note>
+  Percentages are stored on-chain as basis points (100% = 10,000 bps). The app converts between the two automatically — enter plain percentages.
+</Note>
+
+### Validation rules
+
+- At least one heir is required
+- Every heir must have a non-empty Stacks address
+- Total split must equal exactly 100%
+- Maximum 10 heirs per vault
+- You cannot proceed to the next step until all rules pass
+
+### Guardian (optional)
+
+Below the heirs list, you can optionally set a **guardian address**. A guardian is a trusted party who can call `guardian-pause` once during the grace period to extend the time before heirs can claim — giving you or your family more time to react to an unexpected absence.
+
+Leave the guardian field empty if you do not need this feature. See [guardian system](/concepts/guardian-system) for full details.
+
+---
+
+## Step 3 — Deposit
+
+The deposit step lets you fund the vault at creation time. This step is optional — you can skip it and add funds from the dashboard later.
+
+### sBTC
+
+Enter a BTC-denominated amount to deposit. The app converts it to satoshis internally (multiplies by 10⁸). Quick preset buttons are available: 0.001, 0.01, 0.05, 0.1 sBTC, or skip.
+
+### USDCx
+
+Enter a USD-denominated amount. The app converts it to micro-units internally (multiplies by 10⁶). Quick preset buttons are available: $100, $500, $1,000, $5,000, or skip.
+
+### Viewing your balances
+
+Your current sBTC and USDCx wallet balances are fetched from the Hiro API using `useTokenBalances`. If you don't yet have either token, see the [quickstart](/quickstart) for instructions on getting testnet tokens.
+
+<Note>
+  You can deposit sBTC, USDCx, both, or neither at creation time. A vault with no balance is still valid — heirs can claim a zero balance if the vault becomes claimable.
+</Note>
+
+---
+
+## Step 4 — Review and confirm
+
+The review step shows a summary of all your configured parameters before submitting.
+
+**What is displayed:**
+- Heartbeat interval, grace period, and total deadline
+- Deposit amounts for sBTC and USDCx
+- All heirs with their label, truncated address, percentage, and calculated token share
+- Guardian address (if set)
+
+Review everything carefully, then click **Create Vault**.
+
+### Transaction submission
+
+After you click **Create Vault**, the app progresses through a sequence of states displayed on screen:
+
+<Steps>
+  <Step title="Creating vault">
+    The app calls `createVaultOnChain()`, which submits a `create-vault` transaction to the Stacks network. Your wallet extension opens and asks you to confirm the transaction. Approve it.
+  </Step>
+  <Step title="Waiting for confirmation">
+    If you entered deposit amounts, the app polls the contract every 5 seconds using `getVaultStatus()` to detect when the vault creation transaction has confirmed on-chain. This step is skipped if you chose no deposits.
+  </Step>
+  <Step title="Depositing sBTC (if applicable)">
+    Once the vault is confirmed, the app submits the `deposit-sbtc` transaction. Confirm it in your wallet.
+  </Step>
+  <Step title="Depositing USDCx (if applicable)">
+    The app submits the `deposit-usdcx` transaction. Confirm it in your wallet.
+  </Step>
+  <Step title="Complete">
+    A success screen appears. The app redirects you to the dashboard after 3 seconds.
+  </Step>
+</Steps>
+
+### Transaction hashes
+
+During and after submission, the app displays transaction hash links. Click **View on Explorer** to open the transaction in the Stacks Explorer and monitor confirmation status.
+
+<Warning>
+  Do not close the browser tab while transactions are pending. If you navigate away during the deposit phase, your vault will still be created but the deposits will not have been submitted. You can deposit from the dashboard later.
+</Warning>
+
+---
+
+## After vault creation
+
+Once the wizard completes, you are redirected to the **Dashboard**, where you can:
+
+- View the real-time countdown to your next required heartbeat
+- See the sBTC and USDCx balances locked in the vault
+- Send heartbeats to reset the timer
+- Monitor your heirs' claim status
+
+## Adding more funds after creation
+
+You are not limited to the funds you deposit during the wizard. From the dashboard, you can deposit additional sBTC or USDCx at any time while the vault is in the `active` or `grace` state. The process calls the same `deposit-sbtc` and `deposit-usdcx` contract functions.

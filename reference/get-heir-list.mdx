@@ -1,0 +1,162 @@
+---
+title: "get-heir-list"
+description: "Retrieve the ordered list of heir principal addresses registered on a vault."
+---
+
+Returns the list of Stacks addresses registered as heirs on the specified vault. The order matches the `heirs-data` list passed to [`create-vault`](/reference/create-vault) or the most recent call to [`update-heirs`](/reference/update-heirs). Up to 10 heirs can be registered on a single vault.
+
+## Function signature
+
+<CodeGroup>
+
+```clarity Clarity
+(define-read-only (get-heir-list (owner principal))
+  -> (response (list 10 principal) uint)
+)
+```
+
+```typescript TypeScript
+getHeirList(ownerAddress: string): Promise<any>
+```
+
+</CodeGroup>
+
+## Parameters
+
+<ParamField path="owner" type="principal" required>
+  The Stacks address of the vault owner whose heir list you want to retrieve. No wallet connection is required.
+</ParamField>
+
+## Return value
+
+<ResponseField name="ok" type="list of principal">
+  Returns `(ok (list 10 principal))` — an ordered list of up to 10 Stacks addresses that are registered as heirs. The list is in the same order as it was provided to `create-vault` or `update-heirs`.
+
+  If no vault exists for the specified owner, the contract returns an empty list rather than an error (see [behavior note](#behavior-note) below).
+</ResponseField>
+
+## Behavior note
+
+Unlike [`get-vault-status`](/reference/get-vault-status) and [`get-heir-info`](/reference/get-heir-info), `get-heir-list` does not return `ERR-VAULT-NOT-FOUND` for an unknown owner. Instead, it uses `default-to` to return an empty list:
+
+```clarity
+;; From heirloom-vault.clar
+(define-read-only (get-heir-list (owner principal))
+  (ok (default-to (list) (map-get? heir-list owner)))
+)
+```
+
+This means a successful response with an empty list can indicate either a vault with no heirs (not a valid state — at least one heir is always required) or an owner address that has no vault at all. If you need to distinguish between these cases, pair this call with [`get-vault-status`](/reference/get-vault-status).
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u103 | `ERR-VAULT-NOT-FOUND` | Not returned by this function — an unknown owner produces an empty list |
+
+<Note>
+  `get-heir-list` always returns `(ok ...)`. There is no error path. To detect a missing vault, call [`get-vault-status`](/reference/get-vault-status) separately — it will return `ERR-VAULT-NOT-FOUND` (`u103`) for an address with no vault.
+</Note>
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript Usage
+import { getHeirList } from './lib/contracts';
+
+const result = await getHeirList('SP1VAULTOWNER1ADDRESSXXXXXXXXXXXXXXXXX');
+
+// The list is nested under .value.value in the cvToJSON output
+const addresses: string[] = (result?.value?.value ?? []).map(
+  (item: any) => item?.value
+);
+
+console.log(addresses);
+// [
+//   'SP2HEIR1ADDRESSXXXXXXXXXXXXXXXXXX',
+//   'SP3HEIR2ADDRESSXXXXXXXXXXXXXXXXXX',
+// ]
+```
+
+```typescript Wrapper source
+// From lib/contracts.ts
+export async function getHeirList(ownerAddress: string) {
+  const result = await fetchCallReadOnlyFunction({
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: 'get-heir-list',
+    functionArgs: [Cl.principal(ownerAddress)],
+    network: NETWORK as 'testnet' | 'mainnet',
+    senderAddress: ownerAddress,
+  });
+
+  return cvToJSON(result);
+}
+```
+
+</CodeGroup>
+
+### Example JSON output from `cvToJSON`
+
+A vault with two heirs:
+
+```json
+{
+  "success": true,
+  "value": {
+    "type": "(ok (list 10 principal))",
+    "value": [
+      { "type": "principal", "value": "SP2HEIR1ADDRESSXXXXXXXXXXXXXXXXXX" },
+      { "type": "principal", "value": "SP3HEIR2ADDRESSXXXXXXXXXXXXXXXXXX" }
+    ]
+  }
+}
+```
+
+## Combining with `get-heir-info` to build a full heir table
+
+Call `get-heir-list` to discover all heir addresses, then call [`get-heir-info`](/reference/get-heir-info) in parallel for each one to retrieve their allocation and claim status:
+
+```typescript
+import { getHeirList, getHeirInfo } from './lib/contracts';
+
+async function getFullHeirTable(ownerAddress: string) {
+  const listResult = await getHeirList(ownerAddress);
+  const addresses: string[] = (listResult?.value?.value ?? []).map(
+    (item: any) => item?.value
+  );
+
+  // Fetch all heir info in parallel
+  const infoResults = await Promise.all(
+    addresses.map(addr => getHeirInfo(ownerAddress, addr))
+  );
+
+  return addresses.map((address, i) => {
+    const fields = infoResults[i]?.value?.value ?? infoResults[i]?.value;
+    const splitBps = parseInt(fields?.['split-bps']?.value ?? '0');
+    const hasClaimed = fields?.['has-claimed']?.value === true;
+
+    return {
+      address,
+      splitBps,
+      percentage: (splitBps / 100).toFixed(2) + '%',
+      hasClaimed,
+    };
+  });
+}
+
+// Example output:
+// [
+//   { address: 'SP2HEIR1...', splitBps: 6000, percentage: '60.00%', hasClaimed: false },
+//   { address: 'SP3HEIR2...', splitBps: 4000, percentage: '40.00%', hasClaimed: true  },
+// ]
+```
+
+<Tip>
+  Use `Promise.all` when fetching `get-heir-info` for multiple heirs. Each call is an independent read-only request — there is no benefit to serializing them.
+</Tip>
+
+<Note>
+  The list returned reflects the state at the last `create-vault` or `update-heirs` call. If heirs have been updated, the list shows only the current heir set. Previous heirs that were removed are not included, though their `heir-claimed` records remain on-chain.
+</Note>

@@ -1,0 +1,126 @@
+---
+title: "guardian-pause"
+description: "Extend a vault's effective deadline by 30 days during the grace period. Usable once per vault by the registered guardian."
+---
+
+Sets the `guardian-pause-used` flag on a vault to `true`, which adds `2,592,000` seconds (30 days) to the vault's effective deadline. This gives an owner additional time to send a heartbeat if they are temporarily unable to access their account. Can only be called by the vault's registered guardian, only during the grace period, and only once per vault lifetime.
+
+## Function signature
+
+```clarity
+(define-public (guardian-pause (vault-owner principal)) -> (response bool uint))
+```
+
+## Parameters
+
+<ParamField path="vault-owner" type="principal" required>
+  The Stacks address of the vault owner whose vault should be paused. The guardian must call this function and pass the owner's address — the vault is looked up by this principal, not by `tx-sender`.
+</ParamField>
+
+## Return value
+
+<ResponseField name="ok" type="bool">
+  Returns `(ok true)` on success. The vault's `guardian-pause-used` flag is set to `true`, extending the effective deadline by 30 days.
+</ResponseField>
+
+<ResponseField name="err" type="uint">
+  Returns `(err uint)` on failure. See [error codes](#error-codes) below.
+</ResponseField>
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u102 | `ERR-NOT-GUARDIAN` | The calling address is not the vault's registered guardian |
+| u103 | `ERR-VAULT-NOT-FOUND` | No vault exists for the specified `vault-owner` |
+| u104 | `ERR-VAULT-NOT-CLAIMABLE` | The grace period has already expired — the vault is already claimable |
+| u111 | `ERR-GUARDIAN-PAUSE-USED` | The guardian has already used their one-time pause for this vault |
+| u112 | `ERR-NOT-IN-GRACE` | The vault is still active — the grace period has not started yet |
+
+## Valid window for guardian-pause
+
+The function checks that elapsed time is within the grace window — past the heartbeat interval but before the full deadline:
+
+```clarity
+;; From heirloom-vault.clar
+(let (
+    (elapsed (get-elapsed vault))
+    (interval (get heartbeat-interval vault))
+    (total (+ interval (get grace-period vault)))
+  )
+  ;; Must be the guardian
+  (asserts! (is-eq (some tx-sender) (get guardian vault)) ERR-NOT-GUARDIAN)
+  ;; Must be in grace period (past interval, before full deadline)
+  (asserts! (>= elapsed interval) ERR-NOT-IN-GRACE)
+  (asserts! (< elapsed total) ERR-VAULT-NOT-CLAIMABLE)
+  ;; Guardian can only pause once
+  (asserts! (not (get guardian-pause-used vault)) ERR-GUARDIAN-PAUSE-USED)
+
+  (map-set vaults vault-owner (merge vault { guardian-pause-used: true }))
+
+  (ok true)
+)
+```
+
+| Vault state | `guardian-pause` allowed? |
+|---|---|
+| `active` | No — returns `ERR-NOT-IN-GRACE` |
+| `grace` | Yes — sets `guardian-pause-used: true` |
+| `claimable` | No — returns `ERR-VAULT-NOT-CLAIMABLE` |
+| `distributed` | No — returns `ERR-VAULT-NOT-FOUND` or `ERR-VAULT-DISTRIBUTED` |
+
+## How the 30-day extension works
+
+The `guardian-pause-used` flag is not a separate timer — it is factored into the effective deadline each time state is computed. The `get-effective-deadline` private function adds `GUARDIAN-PAUSE-BONUS` (`u2592000`) when the flag is `true`:
+
+```clarity
+;; From heirloom-vault.clar
+(define-constant GUARDIAN-PAUSE-BONUS u2592000)
+
+(define-private (get-effective-deadline (vault ...))
+  (let (
+      (base-deadline (+ (get heartbeat-interval vault) (get grace-period vault)))
+      (pause-bonus (if (get guardian-pause-used vault)
+        GUARDIAN-PAUSE-BONUS
+        u0
+      ))
+    )
+    (+ base-deadline pause-bonus)
+  )
+)
+```
+
+Once applied, the pause is permanent for the vault's lifetime — `guardian-pause-used` is never reset to `false` except by creating a new vault via [`create-vault`](/reference/create-vault).
+
+<Warning>
+  The guardian pause is a one-time action. There is no way to undo it or use it a second time. If you are building a guardian interface, disable the pause button as soon as `guardian-pause-used` is `true` in `get-vault-status`.
+</Warning>
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript contracts.ts
+import { guardianPause } from './lib/contracts';
+
+// Guardian extends the vault deadline for the specified owner
+await guardianPause('SP1VAULTOWNER1ADDRESSXXXXXXXXXXXXXXXXX');
+```
+
+```typescript wrapper source
+// From lib/contracts.ts
+export async function guardianPause(vaultOwner: string) {
+  return request('stx_callContract', {
+    contract: FULL_CONTRACT_ID,
+    functionName: 'guardian-pause',
+    functionArgs: [Cl.principal(vaultOwner)],
+    network: NETWORK as 'testnet' | 'mainnet',
+  });
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  Check `get-vault-status(vaultOwner).guardian-pause-used` and `get-vault-status(vaultOwner).state` before showing the pause button in your UI. Only render the button when `state === 'grace'` and `guardian-pause-used === false`.
+</Tip>

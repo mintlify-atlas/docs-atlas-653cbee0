@@ -1,0 +1,138 @@
+---
+title: "Guardian System"
+description: "An optional trusted address that can extend the inheritance countdown once during the grace period."
+---
+
+The guardian is an optional safety layer for vaults where the owner wants a trusted party to intervene before heirs can claim. A guardian cannot control the vault, cannot withdraw funds, and cannot heartbeat — they have exactly one power: extending the claim deadline by 30 days, once, during the grace period.
+
+## What a Guardian Is
+
+A guardian is a single Stacks address designated at vault creation time. It is typically a trusted person (a spouse, adult child, or close friend) or a professional (an attorney or trusted advisor) who would know if the vault owner is temporarily incapacitated versus permanently unavailable.
+
+The guardian's role is narrow and non-custodial:
+
+- **Can:** Call `guardian-pause(vault-owner-address)` once, during the grace period.
+- **Cannot:** Withdraw funds, send heartbeats, update heirs, or take any other vault action.
+
+## When to Use a Guardian
+
+<CardGroup cols={2}>
+  <Card title="Medical Emergency">
+    If you're hospitalized and unable to sign transactions, your guardian can buy an additional 30 days while you recover — preventing heirs from claiming prematurely.
+  </Card>
+  <Card title="Extended Travel">
+    If you're in a location without reliable internet access and your heartbeat window expires, a guardian can extend the deadline until you're back.
+  </Card>
+  <Card title="Dispute Resolution">
+    An attorney guardian can pause the clock while a will contest or estate dispute is resolved, preventing hasty distribution.
+  </Card>
+  <Card title="Family Coordination">
+    A trusted family member who is not an heir can serve as guardian, providing a human checkpoint before assets are distributed.
+  </Card>
+</CardGroup>
+
+## How Guardian Pause Works
+
+The guardian calls `guardian-pause(vault-owner-address)` during the grace period. The contract sets `guardian-pause-used = true` on the vault.
+
+```clarity
+(define-public (guardian-pause (vault-owner principal))
+  (let (
+    (vault (unwrap! (map-get? vaults vault-owner) ERR-VAULT-NOT-FOUND))
+    (elapsed (get-elapsed vault))
+    (interval (get heartbeat-interval vault))
+    (total (+ interval (get grace-period vault)))
+  )
+    ;; Must be the guardian
+    (asserts! (is-eq (some tx-sender) (get guardian vault)) ERR-NOT-GUARDIAN)
+    ;; Must be in grace period (past interval, before full deadline)
+    (asserts! (>= elapsed interval) ERR-NOT-IN-GRACE)
+    (asserts! (< elapsed total) ERR-VAULT-NOT-CLAIMABLE)
+    ;; Guardian can only pause once
+    (asserts! (not (get guardian-pause-used vault)) ERR-GUARDIAN-PAUSE-USED)
+
+    (map-set vaults vault-owner (merge vault { guardian-pause-used: true }))
+    (ok true)
+  )
+)
+```
+
+Once `guardian-pause-used` is `true`, the `get-effective-deadline` helper adds `GUARDIAN-PAUSE-BONUS` (2,592,000 seconds = 30 days) to the vault's effective deadline for all state computations:
+
+```clarity
+(define-constant GUARDIAN-PAUSE-BONUS u2592000)
+
+(define-private (get-effective-deadline (vault ...))
+  (let (
+    (base-deadline (+ (get heartbeat-interval vault) (get grace-period vault)))
+    (pause-bonus (if (get guardian-pause-used vault) GUARDIAN-PAUSE-BONUS u0))
+  )
+    (+ base-deadline pause-bonus)
+  )
+)
+```
+
+## Guardian Pause Requirements
+
+All three conditions must be met for `guardian-pause` to succeed:
+
+| Requirement | Error if violated |
+|---|---|
+| `tx-sender` matches the vault's `guardian` field | `ERR-NOT-GUARDIAN` (u102) |
+| `elapsed >= heartbeat-interval` (vault is in grace) | `ERR-NOT-IN-GRACE` (u112) |
+| `elapsed < heartbeat-interval + grace-period` (grace not yet expired) | `ERR-VAULT-NOT-CLAIMABLE` (u104) |
+| `guardian-pause-used == false` | `ERR-GUARDIAN-PAUSE-USED` (u111) |
+
+<Warning>
+  The guardian can only act **during the grace period** — after the heartbeat interval expires but before the grace period ends. If the guardian waits until the vault is already claimable, the pause opportunity is gone.
+</Warning>
+
+## Setting a Guardian
+
+The guardian is set at vault creation by passing a principal wrapped in `some`:
+
+```clarity
+(create-vault
+  u604800     ;; heartbeat-interval: 1 week in seconds
+  u259200     ;; grace-period: 3 days in seconds
+  (list { heir: 'SP_HEIR_ADDRESS, split-bps: u10000 })
+  (some 'SP_GUARDIAN_ADDRESS)  ;; guardian
+)
+```
+
+To create a vault without a guardian, pass `none`:
+
+```clarity
+(create-vault u604800 u259200 (list ...) none)
+```
+
+<Note>
+  There is no function to change the guardian after vault creation. If you need a different guardian, you must `emergency-withdraw` and create a new vault.
+</Note>
+
+## Guardian vs. Heir: Key Differences
+
+| Property | Guardian | Heir |
+|---|---|---|
+| **Purpose** | Emergency pause during grace period | Receive assets after vault becomes claimable |
+| **Receives assets?** | No | Yes |
+| **Can act in active state?** | No | No |
+| **Can act in grace state?** | Yes (pause only) | No |
+| **Can act in claimable state?** | No | Yes (claim) |
+| **Number allowed per vault** | 1 | Up to 10 |
+| **Can heartbeat?** | No | No |
+| **Can emergency-withdraw?** | No | No |
+| **One-time action?** | Yes (one pause per vault) | No (claim once per vault) |
+
+## Choosing the Right Guardian
+
+Because the guardian's power is limited to one extension of the deadline, the bar for trust is lower than for an heir or co-signer — but the guardian should still be someone who:
+
+- Knows your situation well enough to judge whether to pause or let the vault proceed.
+- Will actually monitor the vault (or be notified when the grace period begins).
+- Is reachable and able to sign a Stacks transaction during the grace window.
+- Is not a sole heir (a person who is both guardian and the only heir has no incentive to pause).
+
+<Tip>
+  An attorney or estate executor is a natural fit for the guardian role: they have professional accountability, knowledge of your estate plan, and no direct financial incentive in the vault's assets.
+</Tip>

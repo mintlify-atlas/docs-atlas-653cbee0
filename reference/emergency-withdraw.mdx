@@ -1,0 +1,128 @@
+---
+title: "emergency-withdraw"
+description: "Return all vault assets to the owner and cancel the vault immediately."
+---
+
+Transfers all sBTC and USDCx from the vault back to the calling address (the vault owner) and marks the vault as `distributed` (effectively cancelled). The vault must exist and must not already be distributed. This function can be called at any time before distribution, regardless of vault state.
+
+## Function signature
+
+```clarity
+(define-public (emergency-withdraw) -> (response bool uint))
+```
+
+## Parameters
+
+This function takes no arguments. The vault owner is identified by `tx-sender`.
+
+## Return value
+
+<ResponseField name="ok" type="bool">
+  Returns `(ok true)` on success. All sBTC and USDCx are returned to the owner, both balances are set to `u0`, and `is-distributed` is set to `true`.
+</ResponseField>
+
+<ResponseField name="err" type="uint">
+  Returns `(err uint)` on failure. See [error codes](#error-codes) below.
+</ResponseField>
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u103 | `ERR-VAULT-NOT-FOUND` | The calling address has no vault |
+| u110 | `ERR-VAULT-DISTRIBUTED` | The vault has already been distributed or cancelled |
+
+## How the withdrawal works
+
+The function reads both token balances from the vault and transfers each back to the owner using `as-contract?` with `with-ft`. If a balance is zero, the transfer for that token is skipped:
+
+```clarity
+;; From heirloom-vault.clar
+(define-public (emergency-withdraw)
+  (let (
+      (owner tx-sender)
+      (vault (unwrap! (map-get? vaults tx-sender) ERR-VAULT-NOT-FOUND))
+      (sbtc-bal (get sbtc-balance vault))
+      (usdcx-bal (get usdcx-balance vault))
+    )
+    (asserts! (not (get is-distributed vault)) ERR-VAULT-DISTRIBUTED)
+
+    ;; Return all sBTC to owner
+    (if (> sbtc-bal u0)
+      (try! (as-contract? ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" sbtc-bal))
+        (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer sbtc-bal tx-sender owner none))
+      ))
+      true
+    )
+
+    ;; Return all USDCx to owner
+    (if (> usdcx-bal u0)
+      (try! (as-contract? ((with-ft 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx "usdcx-token" usdcx-bal))
+        (try! (contract-call? 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx transfer usdcx-bal tx-sender owner none))
+      ))
+      true
+    )
+
+    ;; Mark as distributed (effectively cancelled)
+    (map-set vaults owner
+      (merge vault {
+        sbtc-balance: u0,
+        usdcx-balance: u0,
+        is-distributed: true,
+      })
+    )
+
+    (ok true)
+  )
+)
+```
+
+## Effect on vault lifecycle
+
+After `emergency-withdraw` succeeds:
+
+- The vault's `is-distributed` flag is permanently set to `true`.
+- `sbtc-balance` and `usdcx-balance` are both set to `u0`.
+- Heirs can no longer call `claim` against this vault.
+- The owner can create a new vault from the same address using [`create-vault`](/reference/create-vault).
+
+| State before withdrawal | Allowed? |
+|---|---|
+| `active` | Yes |
+| `grace` | Yes |
+| `claimable` | Yes |
+| `distributed` | No — returns `ERR-VAULT-DISTRIBUTED` |
+
+<Warning>
+  `emergency-withdraw` permanently cancels the vault. All heir registrations remain in contract storage, but heirs can no longer claim because `is-distributed` is `true`. If you intend to continue using Heirloom, you must call `create-vault` again after withdrawing.
+</Warning>
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript contracts.ts
+import { emergencyWithdraw } from './lib/contracts';
+
+// Reclaim all vault assets immediately
+await emergencyWithdraw();
+```
+
+```typescript wrapper source
+// From lib/contracts.ts
+export async function emergencyWithdraw() {
+  return request('stx_callContract', {
+    contract: FULL_CONTRACT_ID,
+    functionName: 'emergency-withdraw',
+    functionArgs: [],
+    network: NETWORK as 'testnet' | 'mainnet',
+    postConditionMode: 'allow',
+  });
+}
+```
+
+</CodeGroup>
+
+<Note>
+  `postConditionMode: 'allow'` is used because the contract transfers from its own balance back to the owner using `as-contract?`. The actual amount transferred depends on on-chain state at execution time.
+</Note>

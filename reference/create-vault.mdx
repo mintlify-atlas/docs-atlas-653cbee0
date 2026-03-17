@@ -1,0 +1,144 @@
+---
+title: "create-vault"
+description: "Register a new inheritance vault with a heartbeat interval, grace period, heir list, and optional guardian."
+---
+
+Registers a new vault for the calling principal (`tx-sender`). The vault begins in the `active` state with `last-heartbeat` set to the current `stacks-block-time`. No assets are deposited during creation — use [`deposit-sbtc`](/reference/deposit-sbtc) and [`deposit-usdcx`](/reference/deposit-usdcx) after the vault is created.
+
+## Function signature
+
+```clarity
+(define-public (create-vault
+    (heartbeat-interval uint)
+    (grace-period uint)
+    (heirs-data (list 10 {
+      heir: principal,
+      split-bps: uint,
+    }))
+    (guardian (optional principal))
+  ) -> (response bool uint)
+)
+```
+
+## Parameters
+
+<ParamField path="heartbeat-interval" type="uint" required>
+  The number of seconds of inactivity that must elapse before the vault enters the grace period. Once `stacks-block-time − last-heartbeat` reaches this value, heirs can call `guardian-pause` and the vault transitions to `grace` state.
+
+  Example: `u31536000` (1 year in seconds).
+</ParamField>
+
+<ParamField path="grace-period" type="uint" required>
+  Additional seconds after the heartbeat interval before heirs can claim. The vault becomes claimable when `elapsed >= heartbeat-interval + grace-period`. A grace period gives the owner extra time to recover access and send a heartbeat.
+
+  Example: `u2592000` (30 days in seconds).
+</ParamField>
+
+<ParamField path="heirs-data" type="list" required>
+  A list of up to 10 `{ heir: principal, split-bps: uint }` tuples. Each entry specifies an heir's Stacks address and their share of the vault in [basis points](https://en.wikipedia.org/wiki/Basis_point) (1 bp = 0.01%). The sum of all `split-bps` values must equal exactly `10000` (100%). At least one heir is required.
+
+  Example: `[{ heir: 'SP1ABC..., split-bps: u6000 }, { heir: 'SP2DEF..., split-bps: u4000 }]` (60% / 40% split).
+</ParamField>
+
+<ParamField path="guardian" type="optional principal">
+  An optional Stacks address that can call [`guardian-pause`](/reference/guardian-pause) to extend the vault's effective deadline by 30 days during the grace period. Pass `none` if no guardian is needed.
+
+  The guardian cannot deposit, withdraw, send heartbeats, or modify heirs.
+</ParamField>
+
+## Return value
+
+<ResponseField name="ok" type="bool">
+  Returns `(ok true)` on success.
+</ResponseField>
+
+<ResponseField name="err" type="uint">
+  Returns `(err uint)` on failure. See [error codes](#error-codes) below.
+</ResponseField>
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u106 | `ERR-INVALID-SPLITS` | `heirs-data` is empty, or the sum of all `split-bps` values is not exactly `10000` |
+| u109 | `ERR-VAULT-ALREADY-EXISTS` | The calling address already has an active (non-distributed) vault |
+
+## Basis-point validation
+
+The contract folds over the heir list to sum all `split-bps` values and asserts the total equals `10000` exactly:
+
+```clarity
+;; From heirloom-vault.clar
+(let (
+    (total-splits (fold sum-splits heirs-data u0))
+  )
+  (asserts! (is-eq total-splits BASIS-POINTS) ERR-INVALID-SPLITS)
+  (asserts! (> (len heirs-data) u0) ERR-INVALID-SPLITS)
+  ...
+)
+```
+
+<Warning>
+  Always compute splits using integer arithmetic. If your UI collects percentage inputs, multiply by 100 to get basis points before passing to the contract. Ensure the sum equals exactly `10000` — not `9999` or `10001` — or the transaction will fail with `u106`.
+</Warning>
+
+## Re-creation policy
+
+Each Stacks principal can hold at most one vault at a time. `create-vault` blocks creation if an active vault already exists for the calling address. However, once a vault is fully distributed (all heirs have claimed) or cancelled via [`emergency-withdraw`](/reference/emergency-withdraw), the owner may create a new vault:
+
+```clarity
+;; From heirloom-vault.clar — allow creation if no vault exists,
+;; or if the existing vault is fully distributed
+(match (map-get? vaults tx-sender)
+  existing-vault (asserts! (get is-distributed existing-vault) ERR-VAULT-ALREADY-EXISTS)
+  true
+)
+```
+
+When re-creating, all heir claim statuses are reset via `reset-heir-claim` so previous records do not block new heirs.
+
+## JavaScript example
+
+```typescript contracts.ts
+import { createVault } from './lib/contracts';
+
+// Create a vault with a 1-year heartbeat interval, 30-day grace period,
+// two heirs splitting 60/40, and an optional guardian.
+await createVault(
+  365 * 24 * 60 * 60,   // heartbeatInterval: 1 year in seconds
+  30 * 24 * 60 * 60,    // gracePeriod: 30 days in seconds
+  [
+    { address: 'SP1HEIR1ADDRESSXXXXXXXXXXXXXXXXXX', splitBps: 6000 }, // 60%
+    { address: 'SP2HEIR2ADDRESSXXXXXXXXXXXXXXXXXX', splitBps: 4000 }, // 40%
+  ],
+  'SP3GUARDIAN1ADDRESSXXXXXXXXXXXXXXXXX' // optional guardian
+);
+```
+
+The wrapper converts each heir object into a Clarity tuple and passes `none` for the guardian if the argument is omitted:
+
+```typescript contracts.ts
+// From lib/contracts.ts
+const heirsClarity = heirs.map(h =>
+  Cl.tuple({
+    heir: Cl.principal(h.address),
+    'split-bps': Cl.uint(h.splitBps),
+  })
+);
+
+return request('stx_callContract', {
+  contract: FULL_CONTRACT_ID,
+  functionName: 'create-vault',
+  functionArgs: [
+    Cl.uint(heartbeatInterval),
+    Cl.uint(gracePeriod),
+    Cl.list(heirsClarity),
+    guardian ? Cl.some(Cl.principal(guardian)) : Cl.none(),
+  ],
+  network: NETWORK as 'testnet' | 'mainnet',
+});
+```
+
+<Note>
+  `last-heartbeat` is set to `stacks-block-time` at the moment of creation. The countdown starts immediately — there is no separate activation step. Send a heartbeat periodically to keep the vault in the `active` state.
+</Note>

@@ -1,0 +1,157 @@
+---
+title: "Smart contract overview"
+description: "Architecture, safety guarantees, and deployment details for heirloom-vault.clar."
+---
+
+`heirloom-vault.clar` is the single Clarity 4 contract that implements all Heirloom vault logic. There is no proxy, no upgradeability pattern, and no admin key. What is deployed is what runs.
+
+## Contract identity
+
+| Property | Value |
+|---|---|
+| **Language** | Clarity 4 (epoch: latest) |
+| **Contract name** | `heirloom-vault-v10` |
+| **Deployer (testnet)** | `STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM` |
+| **Full identifier (testnet)** | `STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM.heirloom-vault-v10` |
+
+<Note>
+  Stacks does not allow overwriting deployed contracts. If a new version is deployed, it must use a new contract name (e.g., `heirloom-vault-v11`). Each version is immutable once on-chain.
+</Note>
+
+## What the contract does
+
+The contract manages the full lifecycle of an inheritance vault:
+
+<CardGroup cols={2}>
+  <Card title="Vault creation" icon="plus">
+    Registers a vault for the calling principal with a heartbeat interval, grace period, heir list with basis-point splits, and an optional guardian address.
+  </Card>
+  <Card title="Deposits" icon="arrow-down-to-line">
+    Accepts sBTC and USDCx from the vault owner. Uses Clarity 4 `restrict-assets?` with `with-ft` to enforce exact transfer amounts as post-conditions within the contract itself.
+  </Card>
+  <Card title="Heartbeat" icon="heart-pulse">
+    Records `stacks-block-time` as `last-heartbeat` when the vault owner signs a transaction. Resets the countdown in any non-distributed state.
+  </Card>
+  <Card title="Claims" icon="key">
+    Transfers each heir's proportional share of sBTC and USDCx when the vault is claimable. Uses `as-contract?` with `with-ft` for contract-authorized outbound transfers.
+  </Card>
+  <Card title="Emergency withdrawal" icon="shield">
+    Returns all vault assets to the owner instantly, closing the vault. Available at any time before full distribution.
+  </Card>
+  <Card title="Guardian pause" icon="pause">
+    Allows the designated guardian to extend the effective deadline by 30 days during the grace period, once per vault lifetime.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### Data model
+
+The contract stores four maps:
+
+- **`vaults`** — keyed by owner principal, holds all vault configuration and balances.
+- **`heirs`** — keyed by `(owner, heir)` pair, stores each heir's `split-bps` allocation.
+- **`heir-list`** — keyed by owner principal, stores the ordered list of up to 10 heir addresses.
+- **`heir-claimed`** — keyed by `(owner, heir)` pair, tracks whether each heir has claimed.
+
+See [Data model](/contract/data-model) for the complete field reference.
+
+### Access control
+
+All authorization is enforced via `tx-sender` checks — there are no role registries or permission tables:
+
+| Actor | Permitted actions |
+|---|---|
+| **Owner** (`tx-sender == vault key`) | `heartbeat`, `deposit-sbtc`, `deposit-usdcx`, `emergency-withdraw`, `update-heirs` |
+| **Heir** (present in `heirs` map) | `claim` (only when vault is claimable) |
+| **Guardian** (`tx-sender == vault.guardian`) | `guardian-pause` (once, only during grace period) |
+
+The guardian has no deposit, withdrawal, heartbeat, or heir-management capabilities.
+
+### State computation
+
+Vault state is **not stored as an enum**. There is no on-chain `state` field. The `get-vault-status` read-only function derives state on every call from `stacks-block-time` and `last-heartbeat`:
+
+```clarity
+;; From get-vault-status in heirloom-vault.clar
+state: (if (get is-distributed vault)
+  "distributed"
+  (if (>= elapsed deadline)       ;; elapsed >= interval + grace + pause-bonus
+    "claimable"
+    (if (>= elapsed interval)     ;; elapsed >= interval
+      "grace"
+      "active"
+    )
+  )
+)
+```
+
+Where `elapsed = stacks-block-time − last-heartbeat` and `deadline = heartbeat-interval + grace-period + (2,592,000 if guardian-pause-used, else 0)`.
+
+This means the state returned by `get-vault-status` is **always current** — no separate transaction is required to advance state, and there is no window where a vault appears active but is secretly claimable.
+
+## Clarity 4 features used
+
+### `stacks-block-time`
+
+A Clarity 4 keyword that returns the current Stacks block timestamp as a uint. Used everywhere a timestamp is needed: recording `last-heartbeat`, computing `elapsed`, and deriving vault state.
+
+```clarity
+;; Reset heartbeat timer to current block time
+(map-set vaults tx-sender (merge vault { last-heartbeat: stacks-block-time }))
+```
+
+Because `stacks-block-time` is a consensus-level value, it cannot be manipulated by the caller or a miner without controlling a block.
+
+### `restrict-assets?` with `with-ft`
+
+Used in `deposit-sbtc` and `deposit-usdcx` to enforce post-conditions within the contract. This prevents callers from submitting transactions that transfer a different amount than the deposit function expects.
+
+```clarity
+;; From deposit-sbtc — Clarity 4 in-contract post-condition enforcement
+(try! (restrict-assets? tx-sender
+  ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" amount))
+  (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer amount tx-sender current-contract none))
+))
+```
+
+### `as-contract?` with `with-ft`
+
+Used in `claim` and `emergency-withdraw` to authorize outbound token transfers from the contract's own balance. The contract itself becomes the `tx-sender` for the inner transfer call.
+
+```clarity
+;; From claim — contract-authorized transfer to heir
+(try! (as-contract? ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" sbtc-share))
+  (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer sbtc-share tx-sender claimer none))
+))
+```
+
+### `current-contract`
+
+Used as the recipient address in deposit calls so that the contract receives the transferred tokens into its own principal balance.
+
+## Clarity safety properties
+
+Clarity's language design provides guarantees that are directly relevant to a contract holding user funds:
+
+- **Interpreted, not compiled** — the source code you read on-chain is exactly what the network executes. There is no compiler that introduces unexpected behavior.
+- **Decidable** — you can statically verify contract behavior before deployment. There are no unbounded loops or dynamic dispatch.
+- **Reentrancy-safe** — Clarity prevents reentrant calls by design. A contract cannot call back into itself mid-execution, eliminating an entire class of DeFi exploits.
+
+## Vault re-creation
+
+After a vault is fully distributed (all heirs claimed) or cancelled (owner called `emergency-withdraw`), the owner may create a new vault from the same address. The contract allows this because it checks `is-distributed` before blocking creation:
+
+```clarity
+;; From create-vault — allow re-creation if previous vault is fully distributed
+(match (map-get? vaults tx-sender)
+  existing-vault (asserts! (get is-distributed existing-vault) ERR-VAULT-ALREADY-EXISTS)
+  true
+)
+```
+
+When re-creating, all heir claim statuses are reset via `reset-heir-claim` so previous claim records do not block new heirs from claiming in the future.
+
+## Contract reference
+
+For the complete public and read-only function reference, see the [Contract Reference](/reference/create-vault) tab.

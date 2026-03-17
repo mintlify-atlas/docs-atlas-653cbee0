@@ -1,0 +1,95 @@
+---
+title: "Introduction"
+description: "Heirloom is a Bitcoin-native inheritance protocol on Stacks. Lock sBTC and USDCx in a vault, designate heirs with percentage splits, and let the heartbeat mechanism ensure your assets reach the right people."
+---
+
+## What is Heirloom?
+
+Heirloom solves one of Bitcoin's most overlooked problems: **what happens to your Bitcoin when you can't access it?**
+
+An estimated 3–4 million Bitcoin are permanently lost. A growing portion of that loss is due to holder death or incapacitation without any succession plan. Existing solutions all require compromises — seed phrase sharing, multisig complexity, centralized custody, or expensive legal processes.
+
+Heirloom resolves the core tension: **it keeps custody in the owner's hands while making inheritance automatic and trustless.**
+
+<Info>
+Heirloom is deployed on Stacks testnet at contract `heirloom-vault-v10`. All vault operations settle with Bitcoin finality on Layer 1.
+</Info>
+
+## How it works
+
+Heirloom introduces **liveness-based asset release** — a mechanism where vault state is determined by the owner's continued activity, not a fixed calendar date.
+
+<Steps>
+  <Step title="Create a vault">
+    Lock sBTC and/or USDCx into a Clarity smart contract. Set a heartbeat interval (how often you check in) and a grace period (how long heirs wait after a missed heartbeat).
+  </Step>
+  <Step title="Designate heirs">
+    Add up to 10 beneficiary addresses with percentage splits totaling 100%. Optionally appoint a guardian who can extend the grace period once by 30 days.
+  </Step>
+  <Step title="Maintain your heartbeat">
+    Periodically sign a `heartbeat()` transaction from your wallet. This resets the countdown and keeps the vault locked. As long as heartbeats arrive, your assets stay protected.
+  </Step>
+  <Step title="Heirs claim automatically">
+    If the heartbeat stops — due to death, incapacitation, or any reason — the vault enters a grace period, then becomes claimable. Each heir can claim their proportional share of sBTC and USDCx directly from the contract.
+  </Step>
+</Steps>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Multi-asset vaults" icon="vault">
+    Lock both sBTC (Bitcoin-backed) and USDCx (dollar-stable) in the same vault. Heirs receive proportional shares of both assets.
+  </Card>
+  <Card title="Configurable timing" icon="clock">
+    Set your own heartbeat interval (1–365 days) and grace period (1–365 days) to match your lifestyle and risk tolerance.
+  </Card>
+  <Card title="Up to 10 heirs" icon="users">
+    Allocate assets across up to 10 beneficiaries using basis-point splits. Update your heir list at any time while the vault is active.
+  </Card>
+  <Card title="Guardian protection" icon="shield">
+    An optional guardian address can pause the grace period countdown once — giving you time to recover access after hospitalization or travel.
+  </Card>
+  <Card title="Emergency withdrawal" icon="arrow-up-right-from-square">
+    You retain full control. Emergency-withdraw all assets to your wallet at any time before distribution — no waiting period.
+  </Card>
+  <Card title="Trustless execution" icon="lock">
+    No lawyers, no custodians, no seed phrase sharing. The Clarity smart contract enforces every rule on-chain, settled by Bitcoin.
+  </Card>
+</CardGroup>
+
+## Why Stacks?
+
+Heirloom is built on Stacks specifically because Stacks provides:
+
+- **`stacks-block-time`** — Tamper-proof timestamps anchored to Bitcoin blocks. Vault expiry calculations are always accurate and manipulation-resistant.
+- **`restrict-assets?` / `with-ft`** — Clarity 4's post-condition enforcement ensures exact transfer amounts are verified within the contract itself.
+- **Clarity safety** — Clarity is interpreted (what you read is what executes), decidable (behavior verifiable before deployment), and reentrancy-safe.
+- **sBTC** — Bitcoin-backed SIP-010 token that brings real Bitcoin value into smart contract logic.
+- **Bitcoin finality** — All vault state transitions settle on Bitcoin L1, providing the highest security guarantees available.
+
+## No compromises
+
+| Approach | Custody | Trustless | Technical complexity |
+|----------|---------|-----------|---------------------|
+| Seed phrase in a safe | Exposed | No | Low |
+| Multisig with family | Shared | Partial | High |
+| Centralized custody | Surrendered | No | Low |
+| Lawyers + estate planning | Surrendered | No | Medium |
+| **Heirloom** | **Owner retains** | **Yes** | **Low** |
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up your wallet and create your first vault in minutes.
+  </Card>
+  <Card title="How the heartbeat works" icon="heart-pulse" href="/concepts/heartbeat">
+    Understand the liveness mechanism that powers Heirloom.
+  </Card>
+  <Card title="Vault lifecycle" icon="rotate" href="/concepts/vault-lifecycle">
+    Learn the five vault states and how transitions work.
+  </Card>
+  <Card title="Contract reference" icon="code" href="/reference/create-vault">
+    Explore every public function in the Heirloom smart contract.
+  </Card>
+</CardGroup>

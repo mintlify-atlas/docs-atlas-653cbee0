@@ -1,0 +1,143 @@
+---
+title: "Heartbeat"
+description: "How the periodic proof-of-life signal keeps your vault locked and your heirs protected."
+---
+
+The heartbeat is the core mechanism that determines whether a vault is under active ownership. As long as you send regular heartbeats, your vault stays locked. When heartbeats stop, the inheritance countdown begins.
+
+## What the Heartbeat Is
+
+A heartbeat is a signed transaction from the vault owner calling `heartbeat()` on the Heirloom contract. When the contract receives this call, it records the current block timestamp using Clarity 4's `stacks-block-time` and resets the elapsed-time counter to zero.
+
+There is no off-chain scheduler or cron job. The heartbeat is a standard Stacks transaction, settled with Bitcoin finality. The vault state is always computed live from `stacks-block-time` minus `last-heartbeat` — it is never stored as a flag that can go stale.
+
+```clarity
+;; The full heartbeat implementation
+(define-public (heartbeat)
+  (let ((vault (unwrap! (map-get? vaults tx-sender) ERR-VAULT-NOT-FOUND)))
+    (asserts! (not (get is-distributed vault)) ERR-VAULT-DISTRIBUTED)
+    (map-set vaults tx-sender (merge vault { last-heartbeat: stacks-block-time }))
+    (ok true)
+  )
+)
+```
+
+## How to Send a Heartbeat
+
+<Tabs>
+  <Tab title="Heirloom App">
+    The dashboard shows a real-time countdown to your next required heartbeat. Click the **Send Heartbeat** button to sign and broadcast the transaction with your connected wallet (Leather or Xverse).
+
+    The countdown resets immediately once the transaction confirms on-chain.
+  </Tab>
+  <Tab title="Direct Contract Call">
+    You can call the contract directly using the Stacks CLI or any transaction-signing tool:
+
+    ```bash
+    # Using Clarinet console (local simnet)
+    ::call heartbeat
+
+    # Using stacks-cli (testnet)
+    stacks call-contract \
+      --contract STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM.heirloom-vault-v10 \
+      --function heartbeat \
+      --network testnet
+    ```
+  </Tab>
+  <Tab title="TypeScript">
+    ```typescript
+    import { openContractCall } from "@stacks/connect";
+    import { uintCV } from "@stacks/transactions";
+
+    openContractCall({
+      contractAddress: "STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM",
+      contractName: "heirloom-vault-v10",
+      functionName: "heartbeat",
+      functionArgs: [],
+      network: "testnet",
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## The Heartbeat Timeline
+
+The following diagram shows the relationship between heartbeats, the heartbeat interval, the grace period, and vault state:
+
+```
+Time ──────────────────────────────────────────────────────────────────────>
+
+  [Heartbeat]          [Heartbeat]        (missed)       [Heartbeat = recovery]
+       │                    │                                    │
+       ▼                    ▼                                    ▼
+───────●────────────────────●───────────────────────────────────●──────────
+       │◄── interval ──────►│◄── interval ──►│◄── grace ──────►│
+                                             │                  │
+                                           GRACE            CLAIMABLE
+                                           begins            begins here
+                                                         (if no recovery)
+```
+
+- **Before interval expires:** vault is `active` — fully locked.
+- **After interval, before interval + grace:** vault is `grace` — countdown visible to heirs.
+- **After interval + grace:** vault is `claimable` — heirs can claim.
+- **Heartbeat sent at any point before full distribution:** vault returns to `active`.
+
+## What Happens If You Miss a Heartbeat
+
+Missing a single heartbeat does not immediately unlock the vault. The vault transitions through two stages:
+
+<Steps>
+  <Step title="Grace period begins">
+    Once `elapsed-seconds` exceeds your configured `heartbeat-interval`, the vault enters the `grace` state. Heirs cannot claim yet. The guardian (if set) can use their one-time pause here.
+  </Step>
+  <Step title="Vault becomes claimable">
+    Once `elapsed-seconds` exceeds `heartbeat-interval + grace-period` (plus any guardian pause bonus), the vault becomes `claimable`. Each heir can now call `claim()` independently.
+  </Step>
+  <Step title="Distribution completes">
+    As each heir claims, the vault balance decreases. When the last heir claims, `claims-count` equals `heir-count` and the vault is automatically marked as `distributed`. No further actions are possible.
+  </Step>
+</Steps>
+
+<Warning>
+  Once the vault reaches `distributed`, it cannot be reversed. The only way to keep assets in your control is to send a heartbeat before all heirs have claimed.
+</Warning>
+
+## Recovery: Heartbeating From Grace or Claimable State
+
+The `heartbeat()` function works in all non-distributed states — including `grace` and `claimable`. This is intentional: if you were hospitalized, traveling without connectivity, or otherwise unable to send heartbeats for an extended period, you can still recover your vault as long as at least one heir has not yet claimed.
+
+```clarity
+;; The contract only blocks heartbeat on a fully distributed vault
+(asserts! (not (get is-distributed vault)) ERR-VAULT-DISTRIBUTED)
+```
+
+Sending a heartbeat from `grace` or `claimable` state resets `last-heartbeat` to the current block time, immediately returning the computed state to `active`.
+
+<Note>
+  If one heir has already claimed their share, their tokens are gone. A recovery heartbeat does not reverse completed claims. It only stops future claims by resetting the timer.
+</Note>
+
+## Choosing a Heartbeat Interval
+
+The heartbeat interval is set when you create the vault and cannot be changed without creating a new vault. Choose an interval that matches your activity patterns and risk tolerance.
+
+| Interval | Best For | Risk |
+|---|---|---|
+| **Daily** (86,400 s) | High-value vaults, frequent travelers | Must check in every day; easy to miss |
+| **Weekly** (604,800 s) | Most users | A week of inactivity starts the clock |
+| **Monthly** (2,592,000 s) | Low-maintenance vaults | Up to a month of absence before grace begins |
+| **Quarterly** (7,776,000 s) | Long-term storage vaults | Risk of forgotten vaults; not recommended without a guardian |
+
+<Tip>
+  Pair a longer heartbeat interval with a dedicated guardian. A monthly interval plus a guardian with a 30-day pause bonus gives your family over two months to react before claims open.
+</Tip>
+
+## Heartbeat Interval vs. Grace Period
+
+These are two separate configuration values:
+
+- **`heartbeat-interval`**: How often you must prove liveness. The vault enters `grace` if this window passes without a heartbeat.
+- **`grace-period`**: A buffer after the missed heartbeat. Designed to absorb temporary outages (hospitalization, device loss, travel). The vault enters `claimable` only after both windows expire.
+
+Both are configured in seconds at vault creation and are fixed for the vault's lifetime.

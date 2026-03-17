@@ -1,0 +1,227 @@
+---
+title: "get-vault-status"
+description: "Read the full computed state of a vault, including balances, timing fields, heir counts, and lifecycle status."
+---
+
+Returns a complete snapshot of the vault owned by the specified address. All timing fields — `elapsed-seconds`, `seconds-until-grace`, and `seconds-until-claimable` — are computed against `stacks-block-time` at the moment the function is called, so the result is always current and never stale.
+
+## Function signature
+
+<CodeGroup>
+
+```clarity Clarity
+(define-read-only (get-vault-status (owner principal))
+  -> (response {
+    state: (string-ascii 12),
+    sbtc-balance: uint,
+    usdcx-balance: uint,
+    last-heartbeat: uint,
+    heartbeat-interval: uint,
+    grace-period: uint,
+    elapsed-seconds: uint,
+    seconds-until-grace: uint,
+    seconds-until-claimable: uint,
+    heir-count: uint,
+    claims-count: uint,
+    guardian: (optional principal),
+    guardian-pause-used: bool,
+    is-distributed: bool,
+    created-at: uint,
+  } uint)
+)
+```
+
+```typescript TypeScript
+getVaultStatus(ownerAddress: string): Promise<any>
+```
+
+</CodeGroup>
+
+## Parameters
+
+<ParamField path="owner" type="principal" required>
+  The Stacks address of the vault owner to query. This is a read-only call — no wallet signature is required, and the caller does not need to be the owner.
+</ParamField>
+
+## Return value
+
+On success, returns `(ok { ... })` with the following 15 fields:
+
+<ResponseField name="state" type="string-ascii 12">
+  The vault's current lifecycle state. One of four values:
+
+  | Value | Condition |
+  |---|---|
+  | `"active"` | `elapsed-seconds < heartbeat-interval` |
+  | `"grace"` | `heartbeat-interval <= elapsed-seconds < heartbeat-interval + grace-period + guardian-bonus` |
+  | `"claimable"` | `elapsed-seconds >= heartbeat-interval + grace-period + guardian-bonus` (and not distributed) |
+  | `"distributed"` | `is-distributed = true` |
+
+  The `"distributed"` check takes priority — a vault is `"distributed"` even if its timing would otherwise place it in `"claimable"`.
+</ResponseField>
+
+<ResponseField name="sbtc-balance" type="uint">
+  The vault's current sBTC balance in satoshis. Divide by `10^8` to convert to BTC. Decreases as heirs claim their shares.
+</ResponseField>
+
+<ResponseField name="usdcx-balance" type="uint">
+  The vault's current USDCx balance in micro-units. Divide by `10^6` to convert to USD. Decreases as heirs claim their shares.
+</ResponseField>
+
+<ResponseField name="last-heartbeat" type="uint">
+  The `stacks-block-time` value recorded when the owner last called [`heartbeat`](/reference/heartbeat), or the creation timestamp if no heartbeat has been sent since the vault was created. Used as the base for all elapsed-time calculations.
+</ResponseField>
+
+<ResponseField name="heartbeat-interval" type="uint">
+  The number of seconds of inactivity configured when the vault was created. The vault enters `"grace"` state once `elapsed-seconds` reaches this value.
+</ResponseField>
+
+<ResponseField name="grace-period" type="uint">
+  Additional seconds after the heartbeat interval before the vault becomes claimable. Configured at vault creation.
+</ResponseField>
+
+<ResponseField name="elapsed-seconds" type="uint">
+  Seconds elapsed since `last-heartbeat`, computed as `stacks-block-time - last-heartbeat` at query time. This value increases with every new Stacks block.
+</ResponseField>
+
+<ResponseField name="seconds-until-grace" type="uint">
+  Seconds remaining before the vault enters the `"grace"` state. Returns `0` once the vault is already in grace, claimable, or distributed state.
+</ResponseField>
+
+<ResponseField name="seconds-until-claimable" type="uint">
+  Seconds remaining before heirs can call [`claim`](/reference/claim). Returns `0` once the vault is already claimable or distributed.
+
+  This accounts for the guardian pause bonus: if `guardian-pause-used` is `true`, an additional 2,592,000 seconds (30 days) is added to the effective deadline.
+</ResponseField>
+
+<ResponseField name="heir-count" type="uint">
+  The total number of registered heirs for this vault.
+</ResponseField>
+
+<ResponseField name="claims-count" type="uint">
+  The number of heirs who have already claimed their share. When `claims-count = heir-count`, the vault is automatically marked as `distributed`.
+</ResponseField>
+
+<ResponseField name="guardian" type="optional principal">
+  The Stacks address of the guardian, or `none` if no guardian was configured. The guardian can call [`guardian-pause`](/reference/guardian-pause) once during the grace period to extend the vault's effective deadline by 30 days.
+</ResponseField>
+
+<ResponseField name="guardian-pause-used" type="bool">
+  Whether the guardian has already used their one-time pause. If `true`, the vault's claimable deadline has been extended by 2,592,000 seconds (30 days) and the guardian cannot pause again.
+</ResponseField>
+
+<ResponseField name="is-distributed" type="bool">
+  `true` if the vault has been fully distributed. This happens automatically when the last heir claims, or immediately when the owner calls [`emergency-withdraw`](/reference/emergency-withdraw). A distributed vault cannot receive deposits, heartbeats, or claims.
+</ResponseField>
+
+<ResponseField name="created-at" type="uint">
+  The `stacks-block-time` value recorded when the vault was created via [`create-vault`](/reference/create-vault).
+</ResponseField>
+
+## State computation
+
+The contract derives `state` and all countdown fields in a single read against `stacks-block-time`. No stored `state` field exists on-chain — the value is always freshly computed:
+
+```clarity
+;; From heirloom-vault.clar
+(let (
+    (elapsed (- stacks-block-time (get last-heartbeat vault)))
+    (interval (get heartbeat-interval vault))
+    (deadline (get-effective-deadline vault)) ;; interval + grace + guardian-bonus
+  )
+  (ok {
+    state: (if (get is-distributed vault)
+      "distributed"
+      (if (>= elapsed deadline)
+        "claimable"
+        (if (>= elapsed interval)
+          "grace"
+          "active"
+        )
+      )
+    ),
+    elapsed-seconds: elapsed,
+    seconds-until-grace: (if (>= elapsed interval) u0 (- interval elapsed)),
+    seconds-until-claimable: (if (>= elapsed deadline) u0 (- deadline elapsed)),
+    ...
+  })
+)
+```
+
+The `get-effective-deadline` helper adds the 30-day guardian bonus when `guardian-pause-used` is `true`:
+
+```clarity
+;; From heirloom-vault.clar
+(define-private (get-effective-deadline (vault ...))
+  (let (
+      (base-deadline (+ (get heartbeat-interval vault) (get grace-period vault)))
+      (pause-bonus (if (get guardian-pause-used vault) GUARDIAN-PAUSE-BONUS u0))
+    )
+    (+ base-deadline pause-bonus) ;; GUARDIAN-PAUSE-BONUS = u2592000
+  )
+)
+```
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u103 | `ERR-VAULT-NOT-FOUND` | No vault exists for the specified `owner` address |
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript Usage
+import { getVaultStatus } from './lib/contracts';
+
+const status = await getVaultStatus('SP1VAULTOWNER1ADDRESSXXXXXXXXXXXXXXXXX');
+
+// cvToJSON wraps the result — access fields via .value.value
+const fields = status?.value?.value ?? status?.value;
+
+console.log(fields?.state?.value);             // e.g. "active"
+console.log(fields?.['sbtc-balance']?.value);  // e.g. "500000000" (5 BTC)
+console.log(fields?.['elapsed-seconds']?.value); // e.g. "604800"
+```
+
+```typescript Wrapper source
+// From lib/contracts.ts
+export async function getVaultStatus(ownerAddress: string) {
+  const result = await fetchCallReadOnlyFunction({
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: 'get-vault-status',
+    functionArgs: [Cl.principal(ownerAddress)],
+    network: NETWORK as 'testnet' | 'mainnet',
+    senderAddress: ownerAddress,
+  });
+
+  return cvToJSON(result);
+}
+```
+
+</CodeGroup>
+
+### Handling errors
+
+```typescript
+const result = await getVaultStatus('SP1OWNER...');
+
+if (result?.success === false) {
+  // result.value.value === "103" means ERR-VAULT-NOT-FOUND
+  console.error('Vault not found for this address');
+} else {
+  const fields = result?.value?.value ?? result?.value;
+  const state = fields?.state?.value;
+  // proceed with state
+}
+```
+
+<Note>
+  `get-vault-status` is a read-only function. It does not require a wallet connection or any transaction fee. You can call it from any environment that can reach a Stacks node, including server-side code.
+</Note>
+
+<Tip>
+  Call `get-vault-status` before submitting a [`claim`](/reference/claim) transaction to confirm the vault is in `"claimable"` state. This avoids wasted fees on transactions that will fail with `ERR-VAULT-NOT-CLAIMABLE`.
+</Tip>

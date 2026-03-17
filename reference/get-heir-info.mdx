@@ -1,0 +1,197 @@
+---
+title: "get-heir-info"
+description: "Read a specific heir's allocation in basis points and whether they have already claimed their share."
+---
+
+Returns the allocation and claim status for a single heir registered on a given vault. Use this to check how much of the vault an heir is entitled to and whether they have already claimed it.
+
+## Function signature
+
+<CodeGroup>
+
+```clarity Clarity
+(define-read-only (get-heir-info
+    (owner principal)
+    (heir principal)
+  )
+  -> (response { split-bps: uint, has-claimed: bool } uint)
+)
+```
+
+```typescript TypeScript
+getHeirInfo(ownerAddress: string, heirAddress: string): Promise<any>
+```
+
+</CodeGroup>
+
+## Parameters
+
+<ParamField path="owner" type="principal" required>
+  The Stacks address of the vault owner. Used to locate the correct vault and heir record.
+</ParamField>
+
+<ParamField path="heir" type="principal" required>
+  The Stacks address of the heir to look up. If this address is not a registered heir for the specified vault, the function returns `ERR-NOT-HEIR`.
+</ParamField>
+
+## Return value
+
+On success, returns `(ok { ... })` with the following 2 fields:
+
+<ResponseField name="split-bps" type="uint">
+  The heir's share of the vault in basis points, where `10000` equals 100%. For example:
+
+  | `split-bps` value | Percentage |
+  |---|---|
+  | `u10000` | 100% (sole heir) |
+  | `u5000` | 50% |
+  | `u3334` | 33.34% |
+  | `u1000` | 10% |
+
+  The actual token amount an heir receives is `floor(balance × split-bps / 10000)`. Splits across all heirs on a vault must sum to exactly `10000`.
+</ResponseField>
+
+<ResponseField name="has-claimed" type="bool">
+  Whether this heir has already called [`claim`](/reference/claim) for this vault. `true` means the heir has received their tokens and cannot claim again. `false` means their share is still available.
+
+  This field defaults to `false` for heirs registered on a newly created vault, and is reset to `false` if the owner re-creates the vault after distribution.
+</ResponseField>
+
+## Basis points explained
+
+Basis points (bps) are a unit where 1 bp = 0.01%, so 10,000 bps = 100%. They allow precise integer splits without floating-point arithmetic:
+
+```typescript
+// Convert basis points to a human-readable percentage
+const percentage = (splitBps / 10000) * 100;
+// e.g. 3334 bps → 33.34%
+
+// Compute an heir's token share from split-bps
+const sbtcShare = Math.floor((sbtcBalance * splitBps) / 10000);
+const usdcxShare = Math.floor((usdcxBalance * splitBps) / 10000);
+```
+
+The contract performs the same floor division in Clarity:
+
+```clarity
+;; From heirloom-vault.clar
+(let (
+    (split-bps (get split-bps heir-data))
+    (sbtc-share (/ (* (get sbtc-balance vault) split-bps) BASIS-POINTS))
+    (usdcx-share (/ (* (get usdcx-balance vault) split-bps) BASIS-POINTS))
+  )
+  ...
+)
+```
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u101 | `ERR-NOT-HEIR` | The specified `heir` address is not registered on this vault |
+| u103 | `ERR-VAULT-NOT-FOUND` | No vault exists for the specified `owner` address |
+
+<Warning>
+  `ERR-NOT-HEIR` (`u101`) is returned when the heir address is simply not registered — it is not an access-control error. Any caller can query heir info for any address without restriction; if the address is not a registered heir, the function returns the error regardless of who is calling.
+</Warning>
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript Usage
+import { getHeirInfo } from './lib/contracts';
+
+const result = await getHeirInfo(
+  'SP1VAULTOWNER1ADDRESSXXXXXXXXXXXXXXXXX',
+  'SP2HEIR1ADDRESSXXXXXXXXXXXXXXXXXX'
+);
+
+// cvToJSON wraps the result — navigate the value wrapper
+const fields = result?.value?.value ?? result?.value;
+
+const splitBps = parseInt(fields?.['split-bps']?.value ?? '0');
+const hasClaimed = fields?.['has-claimed']?.value === true;
+
+console.log(`Split: ${(splitBps / 100).toFixed(2)}%`);
+console.log(`Has claimed: ${hasClaimed}`);
+```
+
+```typescript Wrapper source
+// From lib/contracts.ts
+export async function getHeirInfo(ownerAddress: string, heirAddress: string) {
+  const result = await fetchCallReadOnlyFunction({
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: 'get-heir-info',
+    functionArgs: [
+      Cl.principal(ownerAddress),
+      Cl.principal(heirAddress),
+    ],
+    network: NETWORK as 'testnet' | 'mainnet',
+    senderAddress: heirAddress,
+  });
+
+  return cvToJSON(result);
+}
+```
+
+</CodeGroup>
+
+### Example JSON output from `cvToJSON`
+
+A successful response for an heir with a 40% split who has not yet claimed:
+
+```json
+{
+  "success": true,
+  "value": {
+    "type": "(ok (tuple (has-claimed bool) (split-bps uint)))",
+    "value": {
+      "has-claimed": {
+        "type": "bool",
+        "value": false
+      },
+      "split-bps": {
+        "type": "uint",
+        "value": "4000"
+      }
+    }
+  }
+}
+```
+
+A response when the address is not a registered heir:
+
+```json
+{
+  "success": false,
+  "value": {
+    "type": "uint",
+    "value": "101"
+  }
+}
+```
+
+### Handling errors
+
+```typescript
+const result = await getHeirInfo(ownerAddress, heirAddress);
+
+if (result?.success === false) {
+  const errorCode = result?.value?.value;
+  if (errorCode === '101') {
+    console.log('Address is not a registered heir for this vault');
+  } else if (errorCode === '103') {
+    console.log('No vault found for this owner address');
+  }
+} else {
+  const fields = result?.value?.value ?? result?.value;
+  const splitBps = parseInt(fields?.['split-bps']?.value ?? '0');
+  const hasClaimed = fields?.['has-claimed']?.value === true;
+}
+```
+
+<Note>
+  `get-heir-info` is a read-only function and requires no wallet connection or transaction fee. The `senderAddress` in the wrapper is set to `heirAddress` by convention, but this has no effect on the result — read-only calls on Stacks do not use `tx-sender`.
+</Note>

@@ -1,0 +1,153 @@
+---
+title: "Deployment"
+description: "Deploy heirloom-vault to simnet, testnet, and mainnet, and build the frontend for production."
+keywords: ["deployment", "testnet", "mainnet", "Clarinet", "Vite", "Vercel", "contract versioning"]
+---
+
+Heirloom has two deployment targets: the Clarity smart contract (via Clarinet) and the React frontend (via Vite). This page covers both.
+
+## Contract deployment
+
+### Simnet
+
+Simnet deployment is automatic. When you run `npm test` from the project root, the Clarinet SDK reads `deployments/default.simnet-plan.yaml` and deploys `heirloom-vault` (along with its sBTC and USDCx token dependencies) into the in-memory simnet environment before any test runs.
+
+No configuration or token faucet is required. The simnet is fully self-contained.
+
+### Testnet
+
+The contract is currently deployed on Stacks testnet:
+
+| Property | Value |
+|---|---|
+| **Deployer address** | `STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM` |
+| **Current contract name** | `heirloom-vault-v10` |
+| **Full identifier** | `STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM.heirloom-vault-v10` |
+
+To deploy a new version:
+
+```bash
+clarinet deployments apply -p deployments/default.testnet-plan.yaml --no-dashboard
+```
+
+This reads `deployments/default.testnet-plan.yaml`, signs the deployment transaction with the deployer key from `settings/Testnet.toml`, and broadcasts it to testnet.
+
+<Warning>
+  Stacks does not allow overwriting deployed contracts. Once a contract is on-chain, it is immutable. Every new deployment requires a new contract name.
+</Warning>
+
+### Contract versioning
+
+Each time you deploy a modified contract, increment the version suffix in the contract name:
+
+```
+heirloom-vault-v10  →  heirloom-vault-v11  →  heirloom-vault-v12
+```
+
+Update the contract name in two places before deploying:
+
+1. **`Clarinet.toml`** — update the `[contracts.heirloom-vault-vN]` section name.
+2. **`deployments/default.testnet-plan.yaml`** — update the contract name in the deployment plan.
+
+After a successful deployment, update `VITE_CONTRACT_NAME` in `heirloom-app/.env` so the frontend points to the new contract. See [Environment variables](/development/environment-variables) for details.
+
+### Mainnet
+
+`settings/Mainnet.toml` contains a placeholder configuration for mainnet deployment. Before deploying to mainnet:
+
+<Steps>
+
+  <Step title="Update settings/Mainnet.toml">
+    Open `settings/Mainnet.toml` and replace the placeholder deployer mnemonic with your real mainnet wallet mnemonic. Set an appropriate fee rate for current network conditions.
+
+    ```toml
+    [network]
+    name = "mainnet"
+
+    [accounts.deployer]
+    mnemonic = "your real mainnet mnemonic here"
+    # fee-rate = 200  # adjust based on current conditions
+    ```
+
+    <Warning>
+      Never commit a real mnemonic to version control. Add `settings/Mainnet.toml` to your `.gitignore` before editing it with real credentials.
+    </Warning>
+  </Step>
+
+  <Step title="Create a mainnet deployment plan">
+    Create `deployments/default.mainnet-plan.yaml` based on the testnet plan, referencing the mainnet network and deployer.
+  </Step>
+
+  <Step title="Deploy">
+    ```bash
+    clarinet deployments apply -p deployments/default.mainnet-plan.yaml --no-dashboard
+    ```
+  </Step>
+
+  <Step title="Update frontend environment variables">
+    Set `VITE_NETWORK=mainnet` and update `VITE_CONTRACT_ADDRESS` and `VITE_CONTRACT_NAME` in your production `.env` to point to the mainnet contract. See [Environment variables](/development/environment-variables).
+  </Step>
+
+</Steps>
+
+## Frontend deployment
+
+### Building for production
+
+From the `heirloom-app/` directory:
+
+<CodeGroup>
+
+```bash Production build
+npm run build
+```
+
+```bash Development build (unminified, with source maps)
+npm run build:dev
+```
+
+```bash Preview the production build locally
+npm run preview
+```
+
+</CodeGroup>
+
+`npm run build` outputs a static site to `heirloom-app/dist/`. The build process reads environment variables from `heirloom-app/.env` at build time — all `VITE_*` variables are inlined into the bundle.
+
+<Warning>
+  Environment variables are baked into the frontend bundle at build time. If you deploy the app against testnet but later deploy a new contract version, you must rebuild and redeploy the frontend with the updated `VITE_CONTRACT_NAME`.
+</Warning>
+
+### Deploying to Vercel
+
+A `vercel.json` configuration file is included in `heirloom-app/`. To deploy:
+
+<Steps>
+
+  <Step title="Install the Vercel CLI">
+    ```bash
+    npm i -g vercel
+    ```
+  </Step>
+
+  <Step title="Set environment variables in Vercel">
+    In the Vercel project dashboard, add all five `VITE_*` environment variables under **Settings → Environment Variables**. Do not use a `.env` file in production — use the Vercel dashboard instead.
+  </Step>
+
+  <Step title="Deploy">
+    ```bash
+    cd heirloom-app
+    vercel --prod
+    ```
+  </Step>
+
+</Steps>
+
+### Post-deployment checklist
+
+After deploying a new contract version and rebuilding the frontend:
+
+- Confirm the new contract is visible on the [Stacks Explorer](https://explorer.hiro.so/?chain=testnet).
+- Verify the frontend connects to the correct contract by opening the dashboard and checking that vault reads return data.
+- Update `VITE_CONTRACT_NAME` in any CI/CD environment variables to match the new version.
+- Communicate the new contract address to any users who interact with the contract directly.

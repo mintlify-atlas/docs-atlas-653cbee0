@@ -1,0 +1,102 @@
+---
+title: "deposit-usdcx"
+description: "Deposit USDCx into your Heirloom vault. Amount is specified in micro-units (6 decimal places)."
+---
+
+Transfers USDCx from the calling address (`tx-sender`) into the Heirloom vault contract, increasing the vault's `usdcx-balance`. The vault must exist and must not be distributed. The calling address must be the vault owner because only the owner's vault entry is looked up via `tx-sender`.
+
+## Function signature
+
+```clarity
+(define-public (deposit-usdcx (amount uint)) -> (response bool uint))
+```
+
+## Parameters
+
+<ParamField path="amount" type="uint" required>
+  The amount of USDCx to deposit, denominated in **micro-units** (the smallest USDCx unit). USDCx has 6 decimal places.
+
+  | Human amount | Micro-unit value |
+  |---|---|
+  | $1.00 USDC | `u1000000` |
+  | $10.00 USDC | `u10000000` |
+  | $100.00 USDC | `u100000000` |
+  | $1,000.00 USDC | `u1000000000` |
+
+  Amount must be greater than zero.
+</ParamField>
+
+## Return value
+
+<ResponseField name="ok" type="bool">
+  Returns `(ok true)` on success. The vault's `usdcx-balance` is incremented by `amount`.
+</ResponseField>
+
+<ResponseField name="err" type="uint">
+  Returns `(err uint)` on failure. See [error codes](#error-codes) below.
+</ResponseField>
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u103 | `ERR-VAULT-NOT-FOUND` | The calling address has no vault |
+| u110 | `ERR-VAULT-DISTRIBUTED` | The vault has been distributed or cancelled |
+| u113 | `ERR-NO-BALANCE` | `amount` is zero |
+
+## How the transfer works
+
+The function uses Clarity 4's `restrict-assets?` with `with-ft` to enforce the exact transfer amount as a post-condition within the contract itself:
+
+```clarity
+;; From heirloom-vault.clar
+(try! (restrict-assets? tx-sender
+  ((with-ft 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx "usdcx-token" amount))
+  (try! (contract-call? 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx transfer amount tx-sender current-contract none))
+))
+
+;; Update balance
+(map-set vaults tx-sender
+  (merge vault { usdcx-balance: (+ (get usdcx-balance vault) amount) })
+)
+```
+
+The USDCx contract is `ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx`. Tokens are transferred to `current-contract` — the vault contract's own principal.
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript contracts.ts
+import { depositUsdcx } from './lib/contracts';
+
+// Deposit $500.00 USDC (500,000,000 micro-units)
+const amountMicro = 500 * 1_000_000; // = 500000000
+await depositUsdcx(amountMicro, senderAddress);
+
+// Deposit $1.50 USDC
+await depositUsdcx(1.5 * 1_000_000, senderAddress);
+```
+
+```typescript wrapper source
+// From lib/contracts.ts
+export async function depositUsdcx(amount: number, senderAddress: string) {
+  return request('stx_callContract', {
+    contract: FULL_CONTRACT_ID,
+    functionName: 'deposit-usdcx',
+    functionArgs: [Cl.uint(amount)],
+    network: NETWORK as 'testnet' | 'mainnet',
+    postConditionMode: 'allow',
+  });
+}
+```
+
+</CodeGroup>
+
+<Note>
+  `postConditionMode: 'allow'` is used for the same reason as in `deposit-sbtc`. The contract enforces the exact transfer amount internally via `restrict-assets?`, making external post-conditions redundant and potentially conflicting.
+</Note>
+
+<Warning>
+  USDCx uses 6 decimal places, not 8. A common mistake is applying sBTC's satoshi multiplier (`× 10^8`) to USDCx amounts. Use `× 10^6` (1,000,000) for USDCx.
+</Warning>

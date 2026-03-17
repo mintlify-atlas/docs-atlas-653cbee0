@@ -1,0 +1,290 @@
+---
+title: "Error codes"
+description: "Complete reference for all Heirloom contract errors, when each is returned, and how to handle them in your application."
+---
+
+All Heirloom contract functions return `(response bool uint)` or `(response {...} uint)`. When a function fails, it returns `(err uint)` where the uint is one of the codes below.
+
+Error constants are defined at the top of `heirloom-vault.clar`:
+
+```clarity
+(define-constant ERR-NOT-HEIR            (err u101))
+(define-constant ERR-NOT-GUARDIAN        (err u102))
+(define-constant ERR-VAULT-NOT-FOUND     (err u103))
+(define-constant ERR-VAULT-NOT-CLAIMABLE (err u104))
+(define-constant ERR-ALREADY-CLAIMED     (err u105))
+(define-constant ERR-INVALID-SPLITS      (err u106))
+(define-constant ERR-VAULT-ALREADY-EXISTS (err u109))
+(define-constant ERR-VAULT-DISTRIBUTED   (err u110))
+(define-constant ERR-GUARDIAN-PAUSE-USED (err u111))
+(define-constant ERR-NOT-IN-GRACE        (err u112))
+(define-constant ERR-NO-BALANCE          (err u113))
+```
+
+## Error reference
+
+### u101 — ERR-NOT-HEIR
+
+**Returned by:** `claim`, `get-heir-info`
+
+The calling address (`tx-sender`) is not registered as an heir for the specified vault owner. Either the address was never added as an heir, or it was removed by a subsequent `update-heirs` call.
+
+**Common scenarios:**
+- An address calls `claim` on a vault where it is not listed as an heir.
+- A frontend passes the wrong `vault-owner` argument to `claim`.
+- The heir list was updated after the heir was given the vault owner's address.
+
+**Handling:**
+```typescript
+if (errorCode === 101) {
+  // Verify the heir address and vault owner address are both correct.
+  // Call get-heir-list(vaultOwner) to confirm the heir is registered.
+}
+```
+
+---
+
+### u102 — ERR-NOT-GUARDIAN
+
+**Returned by:** `guardian-pause`
+
+The calling address is not the guardian registered for the specified vault. The `guardian` field in the vault is an `(optional principal)` — if it is `none`, this error is always returned.
+
+**Common scenarios:**
+- An unrelated address attempts to pause a vault.
+- The vault was created without a guardian (field is `none`).
+- The caller is the vault owner, not the guardian.
+
+**Handling:**
+```typescript
+if (errorCode === 102) {
+  // Check get-vault-status(vaultOwner).guardian to confirm the guardian address.
+  // The owner cannot call guardian-pause on their own vault.
+}
+```
+
+---
+
+### u103 — ERR-VAULT-NOT-FOUND
+
+**Returned by:** `deposit-sbtc`, `deposit-usdcx`, `heartbeat`, `claim`, `emergency-withdraw`, `guardian-pause`, `update-heirs`, `get-vault-status`
+
+No vault exists for the specified principal. This is the most general "vault not found" error and is returned whenever a function calls `(unwrap! (map-get? vaults ...) ERR-VAULT-NOT-FOUND)`.
+
+**Common scenarios:**
+- A vault owner calls `heartbeat` or `deposit-sbtc` before calling `create-vault`.
+- A frontend passes an incorrect owner address to `claim` or `get-vault-status`.
+- A vault was created, distributed, and not re-created yet — the vault map entry still exists with `is-distributed = true`, so this error would not apply in that case. This error only fires when the map entry is absent entirely.
+
+**Handling:**
+```typescript
+if (errorCode === 103) {
+  // No vault exists for this principal at all.
+  // Prompt the owner to create a vault first, or verify the owner address.
+}
+```
+
+---
+
+### u104 — ERR-VAULT-NOT-CLAIMABLE
+
+**Returned by:** `claim`
+
+The vault has not yet reached the claimable state. The elapsed time since the last heartbeat has not exceeded `heartbeat-interval + grace-period + (guardian pause bonus if applicable)`.
+
+Also returned by `guardian-pause` when the elapsed time has already exceeded the full deadline (meaning the vault is already claimable, not in grace).
+
+**Common scenarios:**
+- An heir tries to claim while the vault is still `active` or `grace`.
+- A guardian calls `guardian-pause` after the grace period has already expired.
+
+**Handling:**
+```typescript
+if (errorCode === 104) {
+  // Call get-vault-status to check seconds-until-claimable.
+  // Display the countdown to the heir rather than showing a claim button.
+}
+```
+
+---
+
+### u105 — ERR-ALREADY-CLAIMED
+
+**Returned by:** `claim`
+
+This heir has already called `claim` successfully for this vault. The `heir-claimed` map entry for `(vault-owner, tx-sender)` is `true`.
+
+**Common scenarios:**
+- A frontend does not track claim status locally and allows the heir to submit a second claim transaction.
+- A user tries to claim again after a transaction confirms.
+
+**Handling:**
+```typescript
+if (errorCode === 105) {
+  // Call get-heir-info(vaultOwner, heirAddress) and check has-claimed.
+  // Show a "already claimed" status rather than a claim button.
+}
+```
+
+---
+
+### u106 — ERR-INVALID-SPLITS
+
+**Returned by:** `create-vault`, `update-heirs`
+
+The heir list is invalid. Either:
+- The `heirs-data` list is empty (zero heirs provided), or
+- The sum of all `split-bps` values does not equal exactly `10000`.
+
+```clarity
+;; Both validations use the same error constant
+(asserts! (is-eq total-splits BASIS-POINTS) ERR-INVALID-SPLITS)
+(asserts! (> (len heirs-data) u0) ERR-INVALID-SPLITS)
+```
+
+**Common scenarios:**
+- Basis points sum to 9999 or 10001 due to rounding in the frontend.
+- An empty heir list is submitted.
+- A typo in a split value.
+
+**Handling:**
+```typescript
+if (errorCode === 106) {
+  // Sum all split-bps values and confirm they equal exactly 10000.
+  // Ensure at least one heir is included.
+  // Use integer arithmetic — do not convert to floats and back.
+}
+```
+
+<Tip>
+  Calculate splits as integers from the start. If you allow percentage inputs in your UI, convert them to basis points by multiplying by 100 before passing to the contract. Validate that the sum equals exactly `10000` before submitting.
+</Tip>
+
+---
+
+### u109 — ERR-VAULT-ALREADY-EXISTS
+
+**Returned by:** `create-vault`
+
+The calling address already has an active (non-distributed) vault. Only one vault per owner is permitted at a time.
+
+**Common scenarios:**
+- An owner tries to create a second vault while their first vault is still active.
+- A frontend does not check vault status before showing the "create vault" flow.
+
+**Handling:**
+```typescript
+if (errorCode === 109) {
+  // Call get-vault-status to check the existing vault.
+  // The owner must call emergency-withdraw() to cancel the vault, or wait
+  // for full distribution, before creating a new one.
+}
+```
+
+---
+
+### u110 — ERR-VAULT-DISTRIBUTED
+
+**Returned by:** `deposit-sbtc`, `deposit-usdcx`, `heartbeat`, `claim`, `emergency-withdraw`, `update-heirs`
+
+The vault has already been distributed or cancelled (`is-distributed = true`). No further mutations are possible except `create-vault` (which creates a new vault entry).
+
+**Common scenarios:**
+- A frontend does not refresh vault status after all heirs claim.
+- An owner tries to deposit into a distributed vault.
+- An heir tries to claim after the vault has already been fully distributed.
+
+**Handling:**
+```typescript
+if (errorCode === 110) {
+  // Refresh vault status via get-vault-status.
+  // If is-distributed is true, the vault lifecycle is complete.
+  // The owner may create a new vault from the same address.
+}
+```
+
+---
+
+### u111 — ERR-GUARDIAN-PAUSE-USED
+
+**Returned by:** `guardian-pause`
+
+The guardian has already used their one-time pause for this vault. The `guardian-pause-used` flag is `true`.
+
+**Common scenarios:**
+- The guardian calls `guardian-pause` a second time.
+- A frontend does not check `guardian-pause-used` before showing the pause button.
+
+**Handling:**
+```typescript
+if (errorCode === 111) {
+  // Check get-vault-status(vaultOwner).guardian-pause-used.
+  // The 30-day extension is already in effect — display this to the guardian.
+}
+```
+
+---
+
+### u112 — ERR-NOT-IN-GRACE
+
+**Returned by:** `guardian-pause`
+
+The guardian tried to pause before the grace period began (the vault is still `active`). The `guardian-pause` function requires the vault to be in the grace window: elapsed time must be at least `heartbeat-interval` but less than the full deadline.
+
+```clarity
+;; From guardian-pause in heirloom-vault.clar
+(asserts! (>= elapsed interval) ERR-NOT-IN-GRACE)
+(asserts! (< elapsed total) ERR-VAULT-NOT-CLAIMABLE)
+```
+
+**Common scenarios:**
+- The guardian panics and tries to pause while the vault is still active.
+- A clock synchronization issue causes the frontend to show an incorrect vault state.
+
+**Handling:**
+```typescript
+if (errorCode === 112) {
+  // The vault is still active — no pause is needed yet.
+  // Wait until seconds-until-grace reaches 0 before the pause becomes valid.
+}
+```
+
+---
+
+### u113 — ERR-NO-BALANCE
+
+**Returned by:** `deposit-sbtc`, `deposit-usdcx`
+
+The deposit amount is zero. Deposits must be greater than zero.
+
+```clarity
+(asserts! (> amount u0) ERR-NO-BALANCE)
+```
+
+**Common scenarios:**
+- A frontend passes `0` as the deposit amount.
+- A user submits the deposit form without entering an amount.
+
+**Handling:**
+```typescript
+if (errorCode === 113) {
+  // Validate that the amount is greater than 0 before submitting.
+  // Display an input validation error rather than submitting the transaction.
+}
+```
+
+## Quick reference table
+
+| Code | Constant | Functions | Cause |
+|---|---|---|---|
+| u101 | `ERR-NOT-HEIR` | `claim`, `get-heir-info` | Caller is not a registered heir |
+| u102 | `ERR-NOT-GUARDIAN` | `guardian-pause` | Caller is not the vault's guardian |
+| u103 | `ERR-VAULT-NOT-FOUND` | All mutating functions, `get-vault-status` | No vault exists for the specified owner |
+| u104 | `ERR-VAULT-NOT-CLAIMABLE` | `claim`, `guardian-pause` | Vault not yet claimable, or already past grace |
+| u105 | `ERR-ALREADY-CLAIMED` | `claim` | Heir has already claimed their share |
+| u106 | `ERR-INVALID-SPLITS` | `create-vault`, `update-heirs` | Splits don't sum to 10000 or no heirs provided |
+| u109 | `ERR-VAULT-ALREADY-EXISTS` | `create-vault` | Owner already has an active vault |
+| u110 | `ERR-VAULT-DISTRIBUTED` | `deposit-sbtc`, `deposit-usdcx`, `heartbeat`, `claim`, `emergency-withdraw`, `update-heirs` | Vault is already distributed or cancelled |
+| u111 | `ERR-GUARDIAN-PAUSE-USED` | `guardian-pause` | Guardian has already used their one-time pause |
+| u112 | `ERR-NOT-IN-GRACE` | `guardian-pause` | Vault is not yet in the grace period |
+| u113 | `ERR-NO-BALANCE` | `deposit-sbtc`, `deposit-usdcx` | Deposit amount is zero |

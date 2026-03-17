@@ -1,0 +1,132 @@
+---
+title: "claim"
+description: "Claim your proportional share of a vault's sBTC and USDCx holdings as a registered heir."
+---
+
+Transfers the calling heir's share of a vault's sBTC and USDCx balances to their own address. The caller must be a registered heir for the specified vault, the vault must be in the `claimable` state (elapsed time >= heartbeat-interval + grace-period + any guardian pause bonus), and the heir must not have already claimed.
+
+When the last registered heir calls `claim`, the vault is automatically marked as `distributed`.
+
+## Function signature
+
+```clarity
+(define-public (claim (vault-owner principal)) -> (response bool uint))
+```
+
+## Parameters
+
+<ParamField path="vault-owner" type="principal" required>
+  The Stacks address of the vault owner whose vault the caller is claiming from. This is required because multiple vaults can exist across different owners — the contract uses this to look up the correct vault and verify the caller's heir registration.
+</ParamField>
+
+## Return value
+
+<ResponseField name="ok" type="bool">
+  Returns `(ok true)` on success. The heir's share of sBTC and USDCx is transferred to their address, and the heir's `heir-claimed` status is set to `true`.
+</ResponseField>
+
+<ResponseField name="err" type="uint">
+  Returns `(err uint)` on failure. See [error codes](#error-codes) below.
+</ResponseField>
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u101 | `ERR-NOT-HEIR` | The calling address is not a registered heir for this vault |
+| u103 | `ERR-VAULT-NOT-FOUND` | No vault exists for the specified `vault-owner` |
+| u104 | `ERR-VAULT-NOT-CLAIMABLE` | The vault has not yet reached the claimable state |
+| u105 | `ERR-ALREADY-CLAIMED` | This heir has already claimed their share |
+| u110 | `ERR-VAULT-DISTRIBUTED` | The vault is already fully distributed |
+
+## Share calculation
+
+The heir's share of each token is calculated as the floor of `(balance × split-bps) / 10000`:
+
+```clarity
+;; From heirloom-vault.clar
+(let (
+    (split-bps (get split-bps heir-data))
+    (sbtc-share (/ (* (get sbtc-balance vault) split-bps) BASIS-POINTS))
+    (usdcx-share (/ (* (get usdcx-balance vault) split-bps) BASIS-POINTS))
+  )
+  ...
+)
+```
+
+Clarity integer division truncates toward zero (floor division). For example, if the vault holds `u100000001` satoshis and an heir has `u5000` basis points (50%), their share is `u50000000` — the remainder of 1 satoshi stays in the contract until it rounds into someone else's share or is recovered via `emergency-withdraw`.
+
+<Note>
+  Due to integer floor division, very small remainders may accumulate in the vault after all heirs claim. These remainders are effectively dust (sub-satoshi amounts are not possible, but rounding can leave 1–9 satoshis behind). The vault's `is-distributed` flag is set to `true` when the last heir claims, regardless of any dust balance.
+</Note>
+
+## Transfer mechanism
+
+Outbound transfers use Clarity 4's `as-contract?` with `with-ft`, which elevates the contract's own principal as the `tx-sender` for the inner transfer call:
+
+```clarity
+;; From heirloom-vault.clar — contract-authorized transfer to heir
+(if (> sbtc-share u0)
+  (try! (as-contract? ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" sbtc-share))
+    (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer sbtc-share tx-sender claimer none))
+  ))
+  true
+)
+```
+
+If an heir's share of a token rounds to zero (e.g., the vault holds no sBTC), the transfer for that token is skipped.
+
+## Auto-distribution
+
+After each successful claim, the contract increments `claims-count` and checks whether it equals `heir-count`. When the last heir claims, `is-distributed` is set to `true`:
+
+```clarity
+;; From heirloom-vault.clar
+(let (
+    (new-claims-count (+ (get claims-count vault) u1))
+    (all-claimed (is-eq new-claims-count (get heir-count vault)))
+  )
+  (map-set vaults vault-owner
+    (merge vault {
+      sbtc-balance: (- (get sbtc-balance vault) sbtc-share),
+      usdcx-balance: (- (get usdcx-balance vault) usdcx-share),
+      claims-count: new-claims-count,
+      is-distributed: all-claimed,
+    })
+  )
+)
+```
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript contracts.ts
+import { claimInheritance } from './lib/contracts';
+
+// Claim from a specific vault owner's vault
+await claimInheritance('SP1VAULTOWNER1ADDRESSXXXXXXXXXXXXXXXXX');
+```
+
+```typescript wrapper source
+// From lib/contracts.ts
+export async function claimInheritance(vaultOwner: string) {
+  return request('stx_callContract', {
+    contract: FULL_CONTRACT_ID,
+    functionName: 'claim',
+    functionArgs: [Cl.principal(vaultOwner)],
+    network: NETWORK as 'testnet' | 'mainnet',
+    postConditionMode: 'allow',
+  });
+}
+```
+
+</CodeGroup>
+
+<Note>
+  `postConditionMode: 'allow'` is required because the contract transfers from its own balance to the heir using `as-contract?`. The wallet cannot predict the exact transfer amount from external post-conditions without reading on-chain state first.
+</Note>
+
+<Tip>
+  Before calling `claim`, use [`get-vault-status`](/contract/overview) to confirm the vault is in `claimable` state and [`get-heir-info`](/contract/overview) to verify `has-claimed` is `false`. This avoids submitting transactions that will fail.
+</Tip>

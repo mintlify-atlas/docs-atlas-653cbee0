@@ -1,0 +1,97 @@
+---
+title: "heartbeat"
+description: "Send a proof-of-life signal that resets the vault countdown timer to the current block time."
+---
+
+Resets the vault's `last-heartbeat` to `stacks-block-time`, restarting the inactivity countdown. The vault must exist and must not be distributed. This function is only callable by the vault owner (the address that created the vault), because it uses `tx-sender` to look up the vault.
+
+## Function signature
+
+```clarity
+(define-public (heartbeat) -> (response bool uint))
+```
+
+## Parameters
+
+This function takes no arguments. The vault owner is identified by `tx-sender`.
+
+## Return value
+
+<ResponseField name="ok" type="bool">
+  Returns `(ok true)` on success. The vault's `last-heartbeat` is updated to the current `stacks-block-time`.
+</ResponseField>
+
+<ResponseField name="err" type="uint">
+  Returns `(err uint)` on failure. See [error codes](#error-codes) below.
+</ResponseField>
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u103 | `ERR-VAULT-NOT-FOUND` | The calling address has no vault |
+| u110 | `ERR-VAULT-DISTRIBUTED` | The vault has been distributed or cancelled |
+
+## How the heartbeat works
+
+The function merges `stacks-block-time` into the vault's `last-heartbeat` field:
+
+```clarity
+;; From heirloom-vault.clar
+(define-public (heartbeat)
+  (let ((vault (unwrap! (map-get? vaults tx-sender) ERR-VAULT-NOT-FOUND)))
+    (asserts! (not (get is-distributed vault)) ERR-VAULT-DISTRIBUTED)
+
+    ;; Reset the heartbeat timer
+    (map-set vaults tx-sender (merge vault { last-heartbeat: stacks-block-time }))
+
+    (ok true)
+  )
+)
+```
+
+`stacks-block-time` is a Clarity 4 consensus-level keyword — it returns the timestamp of the current Stacks block and cannot be manipulated by the caller.
+
+## Vault states where heartbeat works
+
+The function only blocks if `is-distributed` is `true`. It succeeds in all other states:
+
+| Vault state | Heartbeat allowed? | Effect |
+|---|---|---|
+| `active` | Yes | Resets timer, vault stays active |
+| `grace` | Yes | Resets timer, vault returns to active |
+| `claimable` | Yes | Resets timer, vault returns to active — heirs can no longer claim |
+| `distributed` | No | Returns `ERR-VAULT-DISTRIBUTED` |
+
+<Warning>
+  Sending a heartbeat while the vault is in `claimable` state will pull the vault back to `active` and prevent heirs from claiming until the countdown expires again. This is intentional — it allows an owner who regains access to recover their vault at any point before distribution.
+</Warning>
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript contracts.ts
+import { sendHeartbeat } from './lib/contracts';
+
+// Called by the vault owner to prove they are still active
+await sendHeartbeat();
+```
+
+```typescript wrapper source
+// From lib/contracts.ts
+export async function sendHeartbeat() {
+  return request('stx_callContract', {
+    contract: FULL_CONTRACT_ID,
+    functionName: 'heartbeat',
+    functionArgs: [],
+    network: NETWORK as 'testnet' | 'mainnet',
+  });
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  Automate heartbeats using a scheduled job or a browser-based reminder. The vault does not send notifications — it is the owner's responsibility to send heartbeats before the interval expires. A missed heartbeat starts the grace period immediately.
+</Tip>

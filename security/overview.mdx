@@ -1,0 +1,118 @@
+---
+title: "Security overview"
+description: "Clarity's safety properties, Heirloom's access control model, asset protection, and known limitations."
+keywords: ["security", "Clarity", "access control", "reentrancy", "asset protection", "audit", "hardware wallet"]
+---
+
+`heirloom-vault.clar` is a non-custodial, non-upgradeable contract with no admin key and no proxy pattern. This page documents the security properties the contract inherits from Clarity, how access control is enforced, and the known limitations users should understand.
+
+## Clarity's safety properties
+
+The security of Heirloom is built on the language-level guarantees of Clarity 4.
+
+### Interpreted, not compiled
+
+Clarity contracts are not compiled to bytecode. The source code you read on-chain — in the Stacks Explorer or via `clarity-read-only` — is exactly what the network executes. There is no compiler pass that introduces unexpected behavior or optimization artifacts. What you audit is what runs.
+
+### Decidable
+
+Clarity is a decidable language: you can statically verify what a contract will do before it is deployed. There are no unbounded loops, no dynamic dispatch, and no reflection. This makes the contract behavior fully analyzable without running it.
+
+### Reentrancy-safe
+
+Clarity prevents reentrant calls by design. A contract cannot call back into itself during execution. This eliminates an entire class of DeFi exploits (including the pattern used in the DAO hack) that are possible in EVM-based contracts.
+
+## Access control
+
+All authorization in `heirloom-vault.clar` is enforced via `tx-sender` checks. There are no role registries, no admin keys, and no privileged deployer functions.
+
+| Actor | Permitted functions | Restrictions |
+|---|---|---|
+| **Owner** (`tx-sender` equals the vault key) | `heartbeat`, `deposit-sbtc`, `deposit-usdcx`, `emergency-withdraw`, `update-heirs` | Cannot act after the vault is distributed |
+| **Heir** (present in the `heirs` map for a given owner) | `claim` | Only callable when the vault is in the claimable state; each heir can claim once |
+| **Guardian** (`tx-sender` equals `vault.guardian`) | `guardian-pause` | One call per vault lifetime; only valid during the grace period |
+
+The guardian is intentionally limited. It cannot withdraw assets, send heartbeats, modify heirs, or claim on behalf of anyone. Its only power is extending the grace deadline by 30 days.
+
+## Asset protection
+
+### Deposit post-conditions
+
+Deposit functions use Clarity 4's `restrict-assets?` with `with-ft` to enforce exact transfer amounts as post-conditions **within the contract itself** — not as an external wallet-level check:
+
+```clarity
+;; From deposit-sbtc
+(try! (restrict-assets? tx-sender
+  ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" amount))
+  (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer amount tx-sender current-contract none))
+))
+```
+
+This prevents callers from submitting transactions that claim to deposit one amount while transferring a different one.
+
+### Outbound transfers
+
+Claim and emergency-withdraw use `as-contract?` with `with-ft` to authorize outbound transfers. The contract becomes `tx-sender` for the inner transfer call, ensuring only the contract can move funds out of its own balance.
+
+### Exact share calculation
+
+Each heir's share is computed as `(/ (* balance split-bps) 10000)` using integer arithmetic. There is no floating-point rounding. Dust from integer division remains in the contract and is not redistributable — this is a known, accepted limitation of basis-point arithmetic.
+
+## Owner recovery
+
+The `heartbeat()` function works in all non-distributed vault states: `active`, `grace`, and `claimable`. This is intentional.
+
+If you were hospitalized, lost your device, or were otherwise unable to send heartbeats for an extended period, you can still recover your vault by sending a heartbeat **before all heirs have claimed**. A single heartbeat resets `last-heartbeat` to the current block time and immediately returns the computed state to `active`.
+
+<Note>
+  Recovery does not reverse claims that have already completed. If one heir has claimed before you send a recovery heartbeat, their tokens are already transferred. The heartbeat only stops future claims.
+</Note>
+
+## Known limitation: compromised wallet
+
+Heirloom's access control is keyed entirely to the vault owner's wallet. If that wallet is compromised, an attacker can:
+
+- **Send heartbeats** — keeping the vault locked and assets inaccessible to heirs indefinitely.
+- **Call `emergency-withdraw`** — returning all assets to the compromised address.
+
+This is inherent to any wallet-based system and is not unique to Heirloom. It is not a contract vulnerability — the contract behaves exactly as designed. The attack surface is the owner's key security, not the contract logic.
+
+<Warning>
+  A compromised owner wallet cannot be mitigated by the guardian. The guardian can only extend the grace period — it cannot freeze heartbeats or block emergency withdrawals.
+</Warning>
+
+## No admin keys, no upgrades, no proxy contracts
+
+Once `heirloom-vault.clar` is deployed, no one — including the original deployer — can:
+
+- Modify the contract code.
+- Pause or freeze the contract.
+- Access vault funds belonging to any user.
+- Change configuration parameters for existing vaults.
+
+Stacks does not provide an upgrade mechanism for deployed contracts. Each new contract version is an independent deployment with a new name (e.g., `heirloom-vault-v11`). Existing vaults on the previous version continue to operate unchanged.
+
+## What's auditable
+
+Because Clarity is interpreted and its source is published on-chain, the full contract is auditable by anyone:
+
+- Read the contract source on the [Stacks Explorer](https://explorer.hiro.so/?chain=testnet) by searching for `STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM.heirloom-vault-v10`.
+- All vault state (balances, heir lists, last heartbeat, claim status) is publicly readable via the contract's read-only functions.
+- All state transitions are recorded as on-chain transactions, settled with Bitcoin finality.
+
+## Recommendations for users
+
+<Columns cols={2}>
+  <Card title="Use a hardware wallet" icon="shield-check">
+    Store your vault owner key on a hardware wallet (Ledger, Trezor) where possible. This is the strongest protection against wallet compromise.
+  </Card>
+  <Card title="Designate a guardian" icon="user-shield">
+    Set a trusted guardian address when creating your vault. The guardian's 30-day pause bonus provides a meaningful buffer if your family needs extra time to respond.
+  </Card>
+  <Card title="Test your heartbeat process" icon="heart-pulse">
+    Before depositing significant funds, test the full heartbeat workflow — create a vault, let the timer run down, and confirm you can send a heartbeat from your wallet.
+  </Card>
+  <Card title="Set a realistic heartbeat interval" icon="clock">
+    Choose an interval that matches your actual activity patterns. An interval that is too short risks accidental expiry; an interval that is too long reduces responsiveness to genuine incapacitation.
+  </Card>
+</Columns>

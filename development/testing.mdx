@@ -1,0 +1,203 @@
+---
+title: "Testing"
+description: "Run the Heirloom contract test suite, understand the simnet environment, and add new tests."
+keywords: ["testing", "Vitest", "Clarinet", "simnet", "test suite", "unit tests", "coverage"]
+---
+
+Heirloom's contract tests use [Vitest](https://vitest.dev) with the Clarinet SDK's `vitest-environment-clarinet` environment. All 23 tests run against a fully in-memory simnet — no network connection, no tokens, no waiting for blocks.
+
+## Test architecture
+
+The test suite lives in `tests/heirloom-vault.test.ts`. Vitest is configured in `vitest.config.ts` to use the `clarinet` environment, which automatically:
+
+1. Starts a simnet instance with the `heirloom-vault` contract deployed.
+2. Injects the global `simnet` object into every test file.
+3. Provides pre-funded `deployer` and `wallet_1` through `wallet_10` accounts.
+
+Each test is isolated — the simnet state resets between test files, but **not** between individual `it()` blocks within a `describe()` group. Tests that need a fresh state call helper functions (like `createDefaultVault()`) to set up their preconditions explicitly.
+
+## Test accounts
+
+The simnet provides four accounts used in the test suite:
+
+| Account | Role in tests |
+|---|---|
+| `deployer` | Contract deployer; vault owner in most tests |
+| `wallet_1` | Heir 1 — receives 70% split in the default vault configuration |
+| `wallet_2` | Heir 2 — receives 30% split in the default vault configuration |
+| `wallet_3` | Guardian in guardian-related tests |
+
+These accounts are retrieved at the top of the test file:
+
+```typescript
+const accounts = simnet.getAccounts();
+const deployer = accounts.get("deployer")!;
+const wallet1 = accounts.get("wallet_1")!;
+const wallet2 = accounts.get("wallet_2")!;
+const wallet3 = accounts.get("wallet_3")!;
+```
+
+## Test commands
+
+All commands run from the project root.
+
+<CodeGroup>
+
+```bash Run once
+npm test
+```
+
+```bash With coverage and cost report
+npm run test:report
+```
+
+```bash Watch mode
+npm run test:watch
+```
+
+</CodeGroup>
+
+- **`npm test`** — runs `vitest run`, executing the full suite once and exiting.
+- **`npm run test:report`** — runs `vitest run -- --coverage --costs`, adding a coverage summary and Clarity execution cost report to the output.
+- **`npm run test:watch`** — uses `chokidar` to watch `tests/**/*.ts` and `contracts/**/*.clar`. Re-runs the full test report automatically whenever you save a test or contract file.
+
+<Tip>
+  Use `test:watch` during active development. It watches both the TypeScript tests and the Clarity contract source, so any change to either triggers an immediate re-run.
+</Tip>
+
+## Test coverage
+
+The suite covers 23 test scenarios organized across 9 describe blocks.
+
+### Vault creation (4 tests)
+
+| Test | What it verifies |
+|---|---|
+| Creates a vault with valid heirs | `create-vault` returns `(ok true)` with a valid 70/30 heir split |
+| Rejects splits that don't sum to 10000 | Returns `ERR-INVALID-SPLITS` (u106) when basis points total 8000 |
+| Rejects duplicate vault creation | Returns `ERR-VAULT-ALREADY-EXISTS` (u109) when an active vault exists |
+| Creates vault with guardian | `create-vault` succeeds when an optional guardian principal is provided |
+
+### Heartbeat (2 tests)
+
+| Test | What it verifies |
+|---|---|
+| Resets the heartbeat timer | `heartbeat` returns `(ok true)` after mining 10 empty blocks |
+| Rejects heartbeat from non-owner | Returns `ERR-VAULT-NOT-FOUND` (u103) when `wallet_1` calls `heartbeat` |
+
+### Vault status (1 test)
+
+| Test | What it verifies |
+|---|---|
+| Returns active status for fresh vault | `get-vault-status` returns a tuple with `state` and `usdcx-balance` fields present |
+
+### Deposits (2 tests)
+
+| Test | What it verifies |
+|---|---|
+| `deposit-sbtc` rejects zero amount | Returns `ERR-NO-BALANCE` (u113) when amount is `u0` |
+| `deposit-usdcx` rejects zero amount | Returns `ERR-NO-BALANCE` (u113) when amount is `u0` |
+
+### Emergency withdrawal (2 tests)
+
+| Test | What it verifies |
+|---|---|
+| Marks vault as distributed | `emergency-withdraw` returns `(ok true)` and closes the vault |
+| Rejects withdraw on distributed vault | Returns `ERR-VAULT-DISTRIBUTED` (u110) on a second withdrawal attempt |
+
+### Heir updates (2 tests)
+
+| Test | What it verifies |
+|---|---|
+| Replaces heir list | `update-heirs` returns `(ok true)` with a new valid 50/50 split |
+| Validates splits sum to 10000 | Returns `ERR-INVALID-SPLITS` (u106) for a single heir with 50% |
+
+### Heir queries (3 tests)
+
+| Test | What it verifies |
+|---|---|
+| Returns heir split and claimed status | `get-heir-info` returns a tuple with a `split-bps` field for a registered heir |
+| Rejects non-heir lookup | Returns `ERR-NOT-HEIR` (u101) when querying an address not in the heir list |
+| Returns list of heir addresses | `get-heir-list` returns a list of length 2 for the default vault |
+
+### Heartbeat on distributed vault (1 test)
+
+| Test | What it verifies |
+|---|---|
+| Rejects heartbeat after emergency withdraw | Returns `ERR-VAULT-DISTRIBUTED` (u110) after the vault is cancelled |
+
+### Vault re-creation (3 tests)
+
+| Test | What it verifies |
+|---|---|
+| Allows creating a new vault after emergency-withdraw | `create-vault` succeeds once the previous vault is distributed |
+| New vault after re-creation is active with fresh state | `is-distributed` is `BoolFalse` on the new vault |
+| Rejects re-creation if vault is not distributed | Returns `ERR-VAULT-ALREADY-EXISTS` (u109) while the previous vault is still active |
+
+### Claim auto-distribution (3 tests)
+
+These tests use `simnet.mineEmptyBlocks(200)` to simulate 200 blocks passing, which advances the simnet clock past the default vault's deadline (interval=120s + grace=60s = 180s).
+
+| Test | What it verifies |
+|---|---|
+| Marks vault as distributed after all heirs claim | After `wallet_1` and `wallet_2` both claim, `is-distributed` becomes `BoolTrue` |
+| Allows re-creation after all heirs claim | `create-vault` succeeds after both heirs have claimed |
+| Rejects re-creation when only some heirs have claimed | Returns `ERR-VAULT-ALREADY-EXISTS` (u109) while one claim is still pending |
+
+## How to read test output
+
+Vitest prints results per describe block. A passing run looks like:
+
+```
+✓ tests/heirloom-vault.test.ts (23)
+  ✓ Heirloom Vault > create-vault (4)
+  ✓ Heirloom Vault > heartbeat (2)
+  ...
+
+Test Files  1 passed (1)
+Tests       23 passed (23)
+```
+
+With `test:report`, execution costs appear after the test summary — useful for estimating Stacks transaction fees before deploying.
+
+## How to add new tests
+
+New tests go in `tests/heirloom-vault.test.ts`. Follow the existing pattern:
+
+```typescript
+describe("my-new-function", () => {
+  it("does the expected thing", () => {
+    // 1. Set up state
+    createDefaultVault();
+
+    // 2. Call the contract function
+    const result = simnet.callPublicFn(
+      "heirloom-vault-v10",
+      "my-function",
+      [Cl.uint(42)],
+      deployer
+    );
+
+    // 3. Assert the result
+    expect(result.result).toBeOk(Cl.bool(true));
+  });
+});
+```
+
+Use `Cl.*` builders from `@stacks/transactions` to construct Clarity values, and `toBeOk` / `toBeErr` from `vitest-environment-clarinet` to assert response types.
+
+<Note>
+  To simulate time passing in a test, call `simnet.mineEmptyBlocks(n)` before the action under test. In the default vault configuration, the heartbeat interval is 120s and the grace period is 60s — so mining 200 blocks is sufficient to put the vault in the claimable state.
+</Note>
+
+## Frontend tests
+
+The `heirloom-app/` directory has its own test setup using Vitest with `@testing-library/react` and `jsdom`. Frontend test commands run from `heirloom-app/`:
+
+```bash
+# Run once
+npm run test
+
+# Watch mode
+npm run test:watch
+```

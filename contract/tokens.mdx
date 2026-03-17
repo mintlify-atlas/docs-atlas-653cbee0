@@ -1,0 +1,180 @@
+---
+title: "Tokens"
+description: "sBTC and USDCx token references, denominations, deposit mechanics, and withdrawal flow used by the Heirloom vault contract."
+---
+
+The Heirloom vault holds two SIP-010 fungible tokens: **sBTC** (Bitcoin-backed) and **USDCx** (dollar-stable). Both use Clarity 4's `restrict-assets?` for inbound transfers and `as-contract?` for outbound transfers.
+
+## sBTC
+
+sBTC is a 1:1 Bitcoin-backed SIP-010 token on Stacks. Every unit of sBTC is backed by real BTC locked in a threshold-signature multisig managed by the Stacks network.
+
+| Property | Value |
+|---|---|
+| **Token name** | `sbtc-token` |
+| **Standard** | SIP-010 fungible token |
+| **Decimals** | 8 |
+| **Base unit** | Satoshi (1 BTC = 100,000,000 satoshis) |
+| **Testnet contract** | `ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token` |
+
+### Denomination
+
+All sBTC amounts in the contract are in **satoshis** (uint). To convert:
+
+```
+1 BTC  = 100,000,000 satoshis
+0.1 BTC = 10,000,000 satoshis
+0.01 BTC = 1,000,000 satoshis
+1,000 sats ≈ 0.00001 BTC
+```
+
+Example: to deposit 0.005 BTC, pass `amount = 500000`.
+
+## USDCx
+
+USDCx is a dollar-stable SIP-010 token on Stacks, providing a USD-denominated tranche in the same vault as sBTC.
+
+| Property | Value |
+|---|---|
+| **Token name** | `usdcx-token` |
+| **Standard** | SIP-010 fungible token |
+| **Decimals** | 6 |
+| **Base unit** | Micro-unit (1 USD = 1,000,000 micro-units) |
+| **Testnet contract** | `ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx` |
+
+### Denomination
+
+All USDCx amounts in the contract are in **micro-units** (uint). To convert:
+
+```
+1 USD  = 1,000,000 micro-units
+0.50 USD = 500,000 micro-units
+0.01 USD = 10,000 micro-units
+1,000 micro-units = 0.001 USD
+```
+
+Example: to deposit $25.00, pass `amount = 25000000`.
+
+## Testnet vs. mainnet contract addresses
+
+<Warning>
+  The token contract addresses below are testnet addresses. Do not use them on mainnet. Mainnet addresses will differ and must be updated in your frontend configuration before a mainnet deployment.
+</Warning>
+
+| Token | Testnet contract |
+|---|---|
+| sBTC | `ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token` |
+| USDCx | `ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx` |
+
+These addresses are hardcoded as constants in the contract:
+
+```clarity
+;; Token references — from heirloom-vault.clar
+(define-constant SBTC-CONTRACT  'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token)
+(define-constant USDCX-CONTRACT 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx)
+```
+
+Because the contract is immutable once deployed, a mainnet version requires a new deployment with updated constants.
+
+## How deposits work
+
+Deposits use Clarity 4's `restrict-assets?` with `with-ft` to enforce a post-condition within the contract. This ensures the caller cannot submit a transaction that transfers a different amount than the deposit function expects.
+
+The `current-contract` keyword specifies the vault contract itself as the token recipient.
+
+```clarity
+;; From deposit-sbtc in heirloom-vault.clar
+(try! (restrict-assets? tx-sender
+  ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" amount))
+  (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer amount tx-sender current-contract none))
+))
+```
+
+```clarity
+;; From deposit-usdcx in heirloom-vault.clar
+(try! (restrict-assets? tx-sender
+  ((with-ft 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx "usdcx-token" amount))
+  (try! (contract-call? 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx transfer amount tx-sender current-contract none))
+))
+```
+
+### What `restrict-assets?` does
+
+`restrict-assets?` is a Clarity 4 primitive that wraps a block of code with a post-condition: the specified fungible token must move from `tx-sender` to the contract in exactly the declared amount. If the inner code transfers a different amount — or no amount at all — the entire transaction is aborted.
+
+This prevents griefing attacks where a caller crafts a transaction that appears to deposit tokens but does not.
+
+## How claims and withdrawals work
+
+Outbound transfers use `as-contract?` with `with-ft`. This switches `tx-sender` to the contract's own principal for the duration of the inner expression, allowing the contract to authorize transfers from its own token balance.
+
+```clarity
+;; From claim in heirloom-vault.clar — sBTC share transferred to heir
+(if (> sbtc-share u0)
+  (try! (as-contract? ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" sbtc-share))
+    (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer sbtc-share tx-sender claimer none))
+  ))
+  true
+)
+```
+
+```clarity
+;; From emergency-withdraw in heirloom-vault.clar — all sBTC returned to owner
+(if (> sbtc-bal u0)
+  (try! (as-contract? ((with-ft 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token "sbtc-token" sbtc-bal))
+    (try! (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer sbtc-bal tx-sender owner none))
+  ))
+  true
+)
+```
+
+### What `as-contract?` does
+
+`as-contract?` elevates the executing principal from the original `tx-sender` to the contract itself. Inside the `as-contract?` block, `tx-sender` becomes the contract's principal. The `with-ft` post-condition then enforces that exactly `amount` tokens leave the contract to the recipient.
+
+Without `as-contract?`, the SIP-010 `transfer` call would fail because the contract does not control `tx-sender`'s tokens — it controls its own balance.
+
+## Share calculation
+
+Each heir's token share is calculated at claim time using integer division over the vault's current balance:
+
+```clarity
+;; From claim in heirloom-vault.clar
+(define-constant BASIS-POINTS u10000)
+
+(let (
+    (split-bps (get split-bps heir-data))
+    (sbtc-share  (/ (* (get sbtc-balance vault) split-bps) BASIS-POINTS))
+    (usdcx-share (/ (* (get usdcx-balance vault) split-bps) BASIS-POINTS))
+  )
+  ...
+)
+```
+
+The vault balance decreases after each claim:
+
+```clarity
+;; Balance updated after each claim
+(map-set vaults vault-owner
+  (merge vault {
+    sbtc-balance:  (- (get sbtc-balance vault) sbtc-share),
+    usdcx-balance: (- (get usdcx-balance vault) usdcx-share),
+    claims-count: new-claims-count,
+    is-distributed: all-claimed,
+  })
+)
+```
+
+<Note>
+  Shares are calculated against the current vault balance at the time of each claim, not against the original deposit amount. If the vault balance changes between claims (which it does as each heir claims), later claimants receive the same percentage of the remaining balance. In practice, because all splits must sum to 100% and each claim reduces the balance by exactly the heir's share, the math is consistent across all heirs.
+</Note>
+
+## Denomination conversion reference
+
+| Input (UI) | sBTC (satoshis, uint) | USDCx (micro-units, uint) |
+|---|---|---|
+| 1 BTC / 1 USD | 100,000,000 | 1,000,000 |
+| 0.1 BTC / $0.10 | 10,000,000 | 100,000 |
+| 0.01 BTC / $0.01 | 1,000,000 | 10,000 |
+| 0.001 BTC / $0.001 | 100,000 | 1,000 |
+| 1 sat / 1 micro-unit | 1 | 1 |

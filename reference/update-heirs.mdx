@@ -1,0 +1,130 @@
+---
+title: "update-heirs"
+description: "Replace the entire heir list and basis-point splits for an existing vault."
+---
+
+Replaces the vault's heir list with a new list of up to 10 heirs and their basis-point allocations. The new heir list completely overwrites the previous one — there is no way to add or remove individual heirs without replacing the full list. The vault must exist and must not be distributed. Only callable by the vault owner.
+
+## Function signature
+
+```clarity
+(define-public (update-heirs
+    (new-heirs (list 10 {
+      heir: principal,
+      split-bps: uint,
+    }))
+  ) -> (response bool uint)
+)
+```
+
+## Parameters
+
+<ParamField path="new-heirs" type="list" required>
+  A list of up to 10 `{ heir: principal, split-bps: uint }` tuples that will replace the current heir list entirely. The same validation rules as `create-vault` apply:
+
+  - The list must contain at least one entry.
+  - The sum of all `split-bps` values must equal exactly `10000`.
+
+  Any heirs from the old list who are not included in the new list will no longer be able to claim.
+</ParamField>
+
+## Return value
+
+<ResponseField name="ok" type="bool">
+  Returns `(ok true)` on success. The `heir-list` map is updated, all `heirs` map entries for the new heirs are updated, and `heir-count` is set to the length of the new list.
+</ResponseField>
+
+<ResponseField name="err" type="uint">
+  Returns `(err uint)` on failure. See [error codes](#error-codes) below.
+</ResponseField>
+
+## Error codes
+
+| Code | Constant | When returned |
+|---|---|---|
+| u103 | `ERR-VAULT-NOT-FOUND` | The calling address has no vault |
+| u106 | `ERR-INVALID-SPLITS` | The new heir list is empty, or `split-bps` values do not sum to `10000` |
+| u110 | `ERR-VAULT-DISTRIBUTED` | The vault has been distributed or cancelled |
+
+## What gets updated
+
+The function updates three data structures:
+
+```clarity
+;; From heirloom-vault.clar
+(define-public (update-heirs (new-heirs (list 10 { heir: principal, split-bps: uint })))
+  (let (
+      (vault (unwrap! (map-get? vaults tx-sender) ERR-VAULT-NOT-FOUND))
+      (total-splits (fold sum-splits new-heirs u0))
+      (new-addresses (map get-heir-address new-heirs))
+    )
+    (asserts! (not (get is-distributed vault)) ERR-VAULT-DISTRIBUTED)
+    (asserts! (is-eq total-splits BASIS-POINTS) ERR-INVALID-SPLITS)
+    (asserts! (> (len new-heirs) u0) ERR-INVALID-SPLITS)
+
+    ;; Update heir list (replaces all addresses)
+    (map-set heir-list tx-sender new-addresses)
+
+    ;; Update individual splits for each new heir
+    (map store-heir-split new-heirs)
+
+    ;; Update heir count in vault record
+    (map-set vaults tx-sender (merge vault { heir-count: (len new-heirs) }))
+
+    (ok true)
+  )
+)
+```
+
+`update-heirs` does **not** reset existing `heir-claimed` entries. Old `split-bps` entries for heirs who are removed from the list are not explicitly deleted — they remain in the `heirs` map but are unreachable because the new heir list no longer includes those addresses.
+
+## Interaction with partial claims
+
+<Warning>
+  If some heirs have already claimed before `update-heirs` is called, the vault's `claims-count` still reflects those previous claims. Because auto-distribution triggers when `claims-count == heir-count`, updating the heir count could shift the distribution threshold:
+
+  - If you reduce the heir count below the current `claims-count`, the next successful claim will trigger auto-distribution even if some new heirs haven't claimed yet.
+  - Avoid calling `update-heirs` after any heir has claimed unless you fully understand the claims-count implications.
+</Warning>
+
+## JavaScript example
+
+<CodeGroup>
+
+```typescript contracts.ts
+import { updateHeirs } from './lib/contracts';
+
+// Replace the heir list with three new heirs
+await updateHeirs([
+  { address: 'SP1HEIR1ADDRESSXXXXXXXXXXXXXXXXXX', splitBps: 5000 }, // 50%
+  { address: 'SP2HEIR2ADDRESSXXXXXXXXXXXXXXXXXX', splitBps: 3000 }, // 30%
+  { address: 'SP3HEIR3ADDRESSXXXXXXXXXXXXXXXXXX', splitBps: 2000 }, // 20%
+]);
+```
+
+```typescript wrapper source
+// From lib/contracts.ts
+export async function updateHeirs(
+  newHeirs: { address: string; splitBps: number }[]
+) {
+  const heirsClarity = newHeirs.map(h =>
+    Cl.tuple({
+      heir: Cl.principal(h.address),
+      'split-bps': Cl.uint(h.splitBps),
+    })
+  );
+
+  return request('stx_callContract', {
+    contract: FULL_CONTRACT_ID,
+    functionName: 'update-heirs',
+    functionArgs: [Cl.list(heirsClarity)],
+    network: NETWORK as 'testnet' | 'mainnet',
+  });
+}
+```
+
+</CodeGroup>
+
+<Note>
+  Verify that all `splitBps` values sum to exactly `10000` before submitting. Use the same integer-arithmetic approach as `create-vault` — compute splits as integers and validate the sum client-side before calling the contract.
+</Note>

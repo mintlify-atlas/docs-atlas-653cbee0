@@ -1,0 +1,83 @@
+---
+title: "Environment variables"
+description: "Configure the Heirloom frontend with VITE_ environment variables for testnet and mainnet."
+keywords: ["environment variables", "VITE", ".env", "testnet", "mainnet", "configuration"]
+---
+
+The Heirloom frontend reads its contract configuration from environment variables prefixed with `VITE_`. These are bundled into the client-side JavaScript at build time by Vite.
+
+## Creating the .env file
+
+Create a `.env` file in the `heirloom-app/` directory. This file is read by `npm run dev`, `npm run build`, and `npm run build:dev`.
+
+```bash
+# heirloom-app/.env
+VITE_NETWORK=testnet
+VITE_CONTRACT_ADDRESS=STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM
+VITE_CONTRACT_NAME=heirloom-vault-v10
+VITE_SBTC_CONTRACT=ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+VITE_USDCX_CONTRACT=ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx
+```
+
+<Warning>
+  Never commit `.env` files to version control. They may contain sensitive wallet mnemonics or API keys. Add `heirloom-app/.env` to your `.gitignore`.
+</Warning>
+
+## Variable reference
+
+| Variable | Description | Default (testnet) |
+|---|---|---|
+| `VITE_NETWORK` | Stacks network to connect to. Accepts `testnet` or `mainnet`. Passed to `@stacks/connect` and `@stacks/transactions`. | `testnet` |
+| `VITE_CONTRACT_ADDRESS` | Deployer's Stacks principal address. Combined with `VITE_CONTRACT_NAME` to form the full contract identifier. | `STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM` |
+| `VITE_CONTRACT_NAME` | Name of the deployed contract. Update this whenever you deploy a new contract version. | `heirloom-vault-v10` |
+| `VITE_SBTC_CONTRACT` | Full contract identifier for the sBTC SIP-010 token (`address.contract-name`). | `ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token` |
+| `VITE_USDCX_CONTRACT` | Full contract identifier for the USDCx SIP-010 token (`address.contract-name`). | `ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx` |
+
+## How Vite handles environment variables
+
+Vite exposes any variable prefixed with `VITE_` to client-side code via `import.meta.env`:
+
+```typescript
+// src/lib/contracts.ts
+const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS;
+const contractName = import.meta.env.VITE_CONTRACT_NAME;
+const network = import.meta.env.VITE_NETWORK;
+```
+
+Variables **without** the `VITE_` prefix are available to the Node.js build process only and are not included in the browser bundle.
+
+<Note>
+  All `VITE_*` variables are inlined as string literals at build time. They are not fetched at runtime. If you change an environment variable, you must rebuild the frontend for the change to take effect.
+</Note>
+
+## Testnet configuration
+
+For development against the current testnet deployment:
+
+```bash
+VITE_NETWORK=testnet
+VITE_CONTRACT_ADDRESS=STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM
+VITE_CONTRACT_NAME=heirloom-vault-v10
+VITE_SBTC_CONTRACT=ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+VITE_USDCX_CONTRACT=ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx
+```
+
+## Mainnet configuration
+
+For a mainnet deployment, update the network, contract address, and contract name. The sBTC and USDCx contract addresses will differ on mainnet — replace them with the canonical mainnet token contracts.
+
+```bash
+VITE_NETWORK=mainnet
+VITE_CONTRACT_ADDRESS=<your mainnet deployer address>
+VITE_CONTRACT_NAME=heirloom-vault-v10
+VITE_SBTC_CONTRACT=<mainnet sBTC contract identifier>
+VITE_USDCX_CONTRACT=<mainnet USDCx contract identifier>
+```
+
+<Tip>
+  When you deploy a new contract version (e.g., `heirloom-vault-v11`), the only variable you need to change is `VITE_CONTRACT_NAME`. The deployer address and token contracts stay the same.
+</Tip>
+
+## Using Vercel environment variables
+
+For production deployments on Vercel, set environment variables in the Vercel dashboard under **Settings → Environment Variables** rather than using a `.env` file. The variable names and values are identical to the local `.env` format.

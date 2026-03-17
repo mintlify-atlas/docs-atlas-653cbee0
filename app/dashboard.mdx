@@ -1,0 +1,169 @@
+---
+title: "Dashboard"
+description: "Monitor your vault's status, send heartbeats, view heirs, and manage your vault from the owner dashboard."
+keywords: ["dashboard", "heartbeat", "vault status", "heirs", "emergency withdraw", "countdown", "guardian"]
+---
+
+The dashboard is the vault owner's primary management interface. It requires a connected wallet and an existing vault. Navigate to it at `/dashboard`.
+
+<Info>
+  The dashboard is for vault owners only. If you are a beneficiary looking to claim your inheritance, go to [Claim inheritance](/app/claim-inheritance) instead.
+</Info>
+
+---
+
+## Vault status banner
+
+The banner at the top of the dashboard shows your vault's current state with a color-coded background.
+
+| State | Color | Description |
+|-------|-------|-------------|
+| **Active** | Green | The heartbeat timer is running. Everything is normal. |
+| **Grace period** | Yellow | A heartbeat was missed. You must send one before the grace period expires. |
+| **Claimable** | Red | The grace period has expired. Heirs can now claim their shares. |
+| **Distributed** | Gray | All assets have been distributed. The vault is closed. |
+
+The banner also displays your Stacks address with a copy button, and the **Send Heartbeat** button (see below).
+
+---
+
+## Real-time countdown
+
+Below the status banner, the countdown timer shows days, hours, minutes, and seconds until the next state transition. It updates every second using the browser clock.
+
+The label above the timer changes based on state:
+
+- **Active** → "Next Heartbeat Due In" — time until your heartbeat interval expires
+- **Grace period** → "Time Until Claimable" — time until heirs can claim
+- **Claimable** → "Vault Is Claimable" — countdown shows zeros
+- **Distributed** → "Vault Distributed"
+
+The timer also shows the timestamp of your last heartbeat at the bottom of the countdown card. During grace period, an **Urgent** badge pulses to draw attention.
+
+<Note>
+  The countdown is computed client-side from on-chain data: `last-heartbeat + heartbeat-interval` gives the grace deadline, and `last-heartbeat + heartbeat-interval + grace-period` gives the claimable deadline. If a guardian has used their pause, an additional 30-day bonus is factored in.
+</Note>
+
+---
+
+## Sending a heartbeat
+
+The **Send Heartbeat** button appears in the status banner whenever the vault is not distributed.
+
+<Steps>
+  <Step title="Click Send Heartbeat">
+    The button is in the top-right area of the status banner. During the grace period, it shakes to indicate urgency.
+  </Step>
+  <Step title="Confirm the transaction">
+    Your wallet extension opens and asks you to sign the `heartbeat` transaction. Confirm it.
+  </Step>
+  <Step title="Wait for confirmation">
+    After submitting, the button shows a loading spinner. The dashboard re-fetches vault data after 5 seconds.
+  </Step>
+  <Step title="Countdown resets">
+    Once the transaction confirms on-chain, the countdown resets to your full heartbeat interval and the vault returns to **Active** state.
+  </Step>
+</Steps>
+
+<Tip>
+  You can send a heartbeat even when the vault is in **Claimable** state, as long as the vault has not been fully distributed. This resets the timer and stops further claims. Any claims already completed are not reversed.
+</Tip>
+
+After a successful heartbeat, a link to the transaction appears below the banner so you can verify it on the Stacks Explorer.
+
+---
+
+## Vault statistics
+
+Three stat cards below the countdown display the key numbers for your vault:
+
+<CardGroup cols={3}>
+  <Card title="sBTC locked" icon="bitcoin">
+    The total sBTC balance currently held in the vault contract, displayed in BTC (8 decimal places) and in satoshis.
+  </Card>
+  <Card title="USDCx locked" icon="dollar-sign">
+    The total USDCx balance held in the vault, displayed in USD (2 decimal places) and in micro-units.
+  </Card>
+  <Card title="Parameters" icon="clock">
+    Your configured heartbeat interval, grace period, and the combined total deadline. Shown in days for intervals of 86,400 seconds or more, otherwise in seconds.
+  </Card>
+</CardGroup>
+
+---
+
+## Heirs list
+
+The heirs card shows all registered beneficiaries for your vault.
+
+Each row displays:
+- **Number** — heir's position in the list (1-indexed)
+- **Label** — the name you gave this heir during vault creation
+- **Address** — truncated Stacks address (first 12 and last 6 characters)
+- **Percentage** — this heir's share of the vault
+- **sBTC share** — calculated token amount based on current vault balance
+- **USDCx share** — shown if the vault holds USDCx
+- **Claimed badge** — a green "Claimed" badge appears if this heir has already called `claim`
+
+The header of the heirs card shows a count of how many heirs have claimed so far (e.g., "1 claimed").
+
+---
+
+## Guardian information
+
+If you set a guardian when creating the vault, a purple card appears below the heirs list showing:
+
+- **Guardian address** — the full Stacks address of the guardian
+- **Pause status** — whether the guardian has already used their one-time pause
+
+The card label reads "Guardian Active" if the pause has not been used, or "Guardian (Pause Used)" after it has been exercised.
+
+<Note>
+  The guardian pause adds approximately 30 days to the claimable deadline. Once used, it cannot be used again for this vault. See [guardian system](/concepts/guardian-system) for details.
+</Note>
+
+---
+
+## Emergency withdrawal
+
+The emergency withdrawal button appears at the bottom of the dashboard whenever the vault is not in the distributed state.
+
+**When to use it:**
+- You want to cancel the vault and reclaim all assets
+- Your circumstances have changed and you no longer need an inheritance vault
+- You want to recreate the vault with different parameters
+
+**What it does:**
+- Returns all sBTC and USDCx locked in the vault to your wallet
+- Permanently closes the vault — it cannot be re-activated
+- Your heirs lose their registered claims
+
+<Steps>
+  <Step title="Click Emergency Withdraw">
+    The button is in the red-bordered card at the bottom of the dashboard.
+  </Step>
+  <Step title="Confirm the browser dialog">
+    A confirmation dialog appears: "Are you sure? This will return all assets and cancel the vault permanently." Click **OK** to proceed.
+  </Step>
+  <Step title="Sign the transaction">
+    Your wallet opens and asks you to sign the `emergency-withdraw` transaction. Confirm it.
+  </Step>
+  <Step title="Assets returned">
+    Once the transaction confirms, your sBTC and USDCx are returned to your wallet. The vault is marked as distributed on-chain.
+  </Step>
+</Steps>
+
+<Warning>
+  Emergency withdrawal is irreversible. After calling it, the vault is permanently closed. You will need to create a new vault if you want to set up inheritance again.
+</Warning>
+
+---
+
+## When the vault is distributed
+
+Once all heirs have claimed their shares (or you have used emergency withdraw), the vault enters the **Distributed** state. The dashboard shows:
+
+- The gray status banner with the label "Distributed" and the description "All assets have been distributed to heirs."
+- The countdown shows all zeros
+- The **Send Heartbeat** and **Emergency Withdraw** buttons are hidden — no further actions are possible on this vault
+
+At this point, the app prompts you to create a new vault if you want to set up inheritance again. Click **Create Vault** to start the wizard from the beginning.
