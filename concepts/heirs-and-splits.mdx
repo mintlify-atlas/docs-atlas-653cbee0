@@ -114,31 +114,37 @@ The Heirloom app's Claim page auto-discovers vaults where your connected wallet 
 To look up a specific vault manually, call `get-heir-info` with the vault owner's address and your address:
 
 ```typescript
+import { Cl, fetchCallReadOnlyFunction, cvToJSON } from "@stacks/transactions";
+
 const result = await fetchCallReadOnlyFunction({
   contractAddress: "STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM",
   contractName: "heirloom-vault-v10",
   functionName: "get-heir-info",
   functionArgs: [
-    principalCV(vaultOwnerAddress),
-    principalCV(yourAddress),
+    Cl.principal(vaultOwnerAddress),
+    Cl.principal(yourAddress),
   ],
   network: "testnet",
   senderAddress: yourAddress,
 });
+const info = cvToJSON(result);
 // Returns: { split-bps: uint, has-claimed: bool }
 ```
 
 You can also retrieve the full list of heirs for a vault:
 
 ```typescript
-const heirList = await fetchCallReadOnlyFunction({
+import { Cl, fetchCallReadOnlyFunction, cvToJSON } from "@stacks/transactions";
+
+const result = await fetchCallReadOnlyFunction({
   contractAddress: "STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM",
   contractName: "heirloom-vault-v10",
   functionName: "get-heir-list",
-  functionArgs: [principalCV(vaultOwnerAddress)],
+  functionArgs: [Cl.principal(vaultOwnerAddress)],
   network: "testnet",
   senderAddress: yourAddress,
 });
+const heirList = cvToJSON(result);
 // Returns: (list 10 principal)
 ```
 

@@ -12,14 +12,14 @@ This guide walks you through creating your first Heirloom vault on Stacks testne
 
 ## Prerequisites
 
-<Columns cols={2}>
+<CardGroup cols={2}>
   <Card title="Node.js v18+" icon="node-js" href="https://nodejs.org">
     Required if you plan to run the app locally. Download the LTS release.
   </Card>
   <Card title="Stacks wallet" icon="wallet">
     Leather or Xverse. Install one before continuing — instructions are in step 1 below.
   </Card>
-</Columns>
+</CardGroup>
 
 ---
 
@@ -30,14 +30,14 @@ This guide walks you through creating your first Heirloom vault on Stacks testne
   <Step title="Install a Stacks wallet">
     Heirloom supports two Stacks wallets. Install one as a browser extension.
 
-    <Columns cols={2}>
+    <CardGroup cols={2}>
       <Card title="Leather" icon="bitcoin" href="https://leather.io">
         The original Hiro wallet, now Leather. Available for Chrome and Firefox.
       </Card>
       <Card title="Xverse" icon="bitcoin" href="https://xverse.app">
         Mobile-first wallet with a full browser extension. Available for Chrome.
       </Card>
-    </Columns>
+    </CardGroup>
 
     After installation, create a new wallet and **save your seed phrase in a secure location before continuing.**
 
@@ -101,7 +101,7 @@ This guide walks you through creating your first Heirloom vault on Stacks testne
     | Field | Description | Example |
     |-------|-------------|---------|
     | **Heartbeat interval** | How often you must check in (1–365 days) | `30` days |
-    | **Grace period** | How long heirs wait after a missed heartbeat (1–365 days) | `90` days |
+    | **Grace period** | How long heirs wait after a missed heartbeat (1–90 days) | `30` days |
     | **Heir addresses** | Up to 10 Stacks addresses | Your test address |
     | **Percentage splits** | Allocations that must total 100% | `100%` for one heir |
 
@@ -109,7 +109,7 @@ This guide walks you through creating your first Heirloom vault on Stacks testne
       Splits are stored as basis points internally (100% = 10000 bps). The app handles this conversion for you — enter plain percentages.
     </Note>
 
-    Click **Deploy Vault** and confirm the transaction in your wallet. The vault is created by calling `create-vault` on:
+    Click **Create Vault** and confirm the transaction in your wallet. The vault is created by calling `create-vault` on:
 
     ```text
     STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM.heirloom-vault-v10
@@ -162,12 +162,12 @@ This guide walks you through creating your first Heirloom vault on Stacks testne
 
 ## What's next
 
-<Columns cols={2}>
+<CardGroup cols={2}>
   <Card title="Heartbeat mechanism" icon="heart-pulse" href="/concepts/heartbeat">
     Understand how the liveness check works and what triggers vault expiry.
   </Card>
   <Card title="Vault lifecycle" icon="rotate" href="/concepts/vault-lifecycle">
-    Learn the five vault states: active, expired, grace, claimable, and closed.
+    Learn the five vault states: active, grace, claimable, distributed, and cancelled.
   </Card>
   <Card title="Heirs and splits" icon="users" href="/concepts/heirs-and-splits">
     Configure up to 10 beneficiaries with basis-point percentage splits.
@@ -175,4 +175,4 @@ This guide walks you through creating your first Heirloom vault on Stacks testne
   <Card title="Emergency withdrawal" icon="arrow-up-right-from-square" href="/reference/emergency-withdraw">
     Recover all vault assets to your wallet at any time before distribution.
   </Card>
-</Columns>
+</CardGroup>

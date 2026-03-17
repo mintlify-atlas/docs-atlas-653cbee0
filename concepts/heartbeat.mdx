@@ -46,16 +46,23 @@ There is no off-chain scheduler or cron job. The heartbeat is a standard Stacks 
   </Tab>
   <Tab title="TypeScript">
     ```typescript
-    import { openContractCall } from "@stacks/connect";
-    import { uintCV } from "@stacks/transactions";
+    import { request } from "@stacks/connect";
 
-    openContractCall({
-      contractAddress: "STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM",
-      contractName: "heirloom-vault-v10",
+    // Uses @stacks/connect v8 request API (same as the Heirloom app)
+    await request('stx_callContract', {
+      contract: "STZJWVYSKRYV1XBGS8BZ4F81E32RHBREQSE5WAJM.heirloom-vault-v10",
       functionName: "heartbeat",
       functionArgs: [],
       network: "testnet",
     });
+    ```
+
+    Or use the wrapper from `lib/contracts.ts`:
+
+    ```typescript
+    import { sendHeartbeat } from "./lib/contracts";
+
+    await sendHeartbeat();
     ```
   </Tab>
 </Tabs>

@@ -67,7 +67,7 @@ The function checks that elapsed time is within the grace window — past the he
 | `active` | No — returns `ERR-NOT-IN-GRACE` |
 | `grace` | Yes — sets `guardian-pause-used: true` |
 | `claimable` | No — returns `ERR-VAULT-NOT-CLAIMABLE` |
-| `distributed` | No — returns `ERR-VAULT-NOT-FOUND` or `ERR-VAULT-DISTRIBUTED` |
+| `distributed` | No — returns `ERR-VAULT-NOT-CLAIMABLE` (if elapsed >= total) or `ERR-NOT-IN-GRACE` (if elapsed < interval) |
 
 ## How the 30-day extension works
 
